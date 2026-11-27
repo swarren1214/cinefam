@@ -173,8 +173,30 @@ final class AppModel {
 
     // MARK: Import + analysis
 
+    /// Adds tapes (files or folders). Folder scanning runs in the background, so a slow
+    /// network drive never blocks the window, and the library changes happen on a later
+    /// main-thread turn, never in the middle of a drop or a layout pass.
     func importTapes(_ urls: [URL]) {
-        let files = urls.flatMap { Self.videoFiles(in: $0) }
+        guard !urls.isEmpty else { return }
+        importScanning += 1
+        Task {
+            let files = await Task.detached(priority: .userInitiated) {
+                urls.flatMap { MediaFiles.videoFiles(in: $0) }
+            }.value
+            importScanning -= 1
+            if files.isEmpty {
+                let names = urls.map(\.lastPathComponent).prefix(3).joined(separator: ", ")
+                errorMessage = "No videos found in \(names). CineFam looks for movie files such as MOV, MP4, AVI, DV, MPG and MKV, including inside folders."
+                return
+            }
+            addTapes(files)
+        }
+    }
+
+    /// Folders being searched for videos right now (shown as a spinner).
+    var importScanning = 0
+
+    private func addTapes(_ files: [URL]) {
         var added = 0
         for url in files {
             guard !tapes.contains(where: { $0.sourceURL == url }) else { continue }
@@ -189,17 +211,7 @@ final class AppModel {
         runQueue()
     }
 
-    /// A video file, or every video inside a folder (and its subfolders), sorted by name.
-    static func videoFiles(in url: URL) -> [URL] {
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return [] }
-        guard isDir.boolValue else { return ContentView.isVideo(url) ? [url] : [] }
-        let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil,
-                                               options: [.skipsHiddenFiles, .skipsPackageDescendants])
-        var out: [URL] = []
-        while let f = e?.nextObject() as? URL { if ContentView.isVideo(f) { out.append(f) } }
-        return out.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-    }
+    static func videoFiles(in url: URL) -> [URL] { MediaFiles.videoFiles(in: url) }
 
     func reanalyze(_ id: UUID) {
         mutateTape(id) { $0.status = .queued }

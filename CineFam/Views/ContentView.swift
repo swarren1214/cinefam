@@ -29,15 +29,30 @@ struct ContentView: View {
                 }
             }
             .dropDestination(for: URL.self) { urls, _ in
-                let videos = urls.flatMap { AppModel.videoFiles(in: $0) }
-                model.importTapes(videos)
-                return !videos.isEmpty
+                // Accept now; scan and add on the next turn of the main loop. Doing the work
+                // inside the drop callback changed the window mid-layout and crashed AppKit.
+                let dropped = urls
+                DispatchQueue.main.async { model.importTapes(dropped) }
+                return !dropped.isEmpty
+            }
+            .overlay(alignment: .bottom) {
+                if model.importScanning > 0 {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Looking for videos…")
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(16)
+                }
             }
         }
         .fileImporter(isPresented: $model.showImporter,
                       allowedContentTypes: [.movie, .video, .audiovisualContent, .folder],
                       allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { model.importTapes(urls) }
+            if case .success(let urls) = result {
+                DispatchQueue.main.async { model.importTapes(urls) }
+            }
         }
         .sheet(isPresented: $model.showExport) {
             if let tape = model.selectedTape { ExportSheet(tape: tape) }
@@ -51,8 +66,5 @@ struct ContentView: View {
         }
     }
 
-    static func isVideo(_ url: URL) -> Bool {
-        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
-        return type.conforms(to: .audiovisualContent)
-    }
+    static func isVideo(_ url: URL) -> Bool { MediaFiles.isVideo(url) }
 }
