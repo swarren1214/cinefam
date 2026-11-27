@@ -47,8 +47,14 @@ struct EventInspector: View {
                 }
                 TextField("People", text: $peopleText, prompt: Text("Mom, Grandpa"))
                     .onSubmit { savePeople() }
-                TextField("Summary", text: $event.summary, axis: .vertical)
-                    .lineLimit(3...6)
+                // Fixed-height editor: a growing TextField(axis: .vertical) inside a macOS Form
+                // can loop AppKit's constraint pass.
+                LabeledContent("Summary") {
+                    TextEditor(text: $event.summary)
+                        .font(.body)
+                        .scrollContentBackground(.hidden)
+                        .frame(height: 72)
+                }
             }
 
             Section {

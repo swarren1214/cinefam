@@ -215,7 +215,12 @@ struct PosterStudioView: View {
                     }
                     TextField("Top line", text: binding.kicker)
                     TextField("Date", text: binding.dateLine)
-                    TextField("Credits", text: binding.billing, axis: .vertical).lineLimit(2...4)
+                    LabeledContent("Credits") {
+                        TextEditor(text: binding.billing)
+                            .font(.body)
+                            .scrollContentBackground(.hidden)
+                            .frame(height: 60)
+                    }
                 }
 
                 if let url = c.event.posterImageURL {

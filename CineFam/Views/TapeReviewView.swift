@@ -12,6 +12,12 @@ struct TapeReviewView: View {
 
     private var tape: Tape? { model.tape(tapeID) }
 
+    /// Troubleshooting switch: hide parts of this screen without rebuilding, e.g.
+    /// `defaults write com.cinefam.CineFam debugHide "player,timeline"` (inspector, toolbar too).
+    /// `defaults delete com.cinefam.CineFam debugHide` turns everything back on.
+    private let debugHide: Set<String> = Set((UserDefaults.standard.string(forKey: "debugHide") ?? "")
+        .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+
     var body: some View {
         @Bindable var model = model
         if let tape {
@@ -23,7 +29,7 @@ struct TapeReviewView: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if model.showInspector {
+                if model.showInspector && !debugHide.contains("inspector") {
                     Divider()
                     inspector(tape)
                         .frame(width: 330)
@@ -32,7 +38,7 @@ struct TapeReviewView: View {
             }
             .navigationTitle(tape.label)
             .navigationSubtitle(subtitle(tape))
-            .toolbar { toolbar(tape) }
+            .toolbar { if !debugHide.contains("toolbar") { toolbar(tape) } }
             .onAppear { load(tape) }
             .onChange(of: tape.proxyURL) { if let t = self.tape { load(t) } }
             .onChange(of: tapeID) { if let t = self.tape { load(t) } }
@@ -82,25 +88,34 @@ struct TapeReviewView: View {
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .glassEffect(.regular, in: .capsule)
             }
-            VideoPlayer(player: player)
-                .clipShape(.rect(cornerRadius: 16))
-                .overlay(alignment: .topLeading) {
-                    if let e = event(at: currentTime, in: tape) {
-                        Text(e.title)
-                            .font(.callout.weight(.semibold))
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .glassEffect(.regular, in: .capsule)
-                            .padding(12)
+            if debugHide.contains("player") {
+                Color.black.clipShape(.rect(cornerRadius: 16))
+            } else {
+                VideoPlayer(player: player)
+                    .clipShape(.rect(cornerRadius: 16))
+                    .overlay(alignment: .topLeading) {
+                        if let e = event(at: currentTime, in: tape) {
+                            // No glass here: glass samples what's behind it, which is
+                            // AVKit's AppKit view.
+                            Text(e.title)
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(.black.opacity(0.55), in: .capsule)
+                                .padding(12)
+                        }
                     }
-                }
-            TapeTimeline(tape: tape, currentTime: currentTime,
-                         selectedEventID: model.selectedEventID) { event in
-                model.selectedEventID = event.id
-                seek(to: event.start)
-            } onSeek: { time in
-                seek(to: time)
             }
-            .frame(height: 96)
+            if !debugHide.contains("timeline") {
+                TapeTimeline(tape: tape, currentTime: currentTime,
+                             selectedEventID: model.selectedEventID) { event in
+                    model.selectedEventID = event.id
+                    seek(to: event.start)
+                } onSeek: { time in
+                    seek(to: time)
+                }
+                .frame(height: 96)
+            }
             if tape.events.isEmpty {
                 Text("No events found on this tape.").foregroundStyle(.secondary)
             }
