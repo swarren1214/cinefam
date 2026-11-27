@@ -263,9 +263,13 @@ struct PosterStudioView: View {
         graded = nil
         guard let c = current else { return }
         working = true
+        defer { working = false }
         await model.loadHeroes(tape: c.tape.id, event: c.event.id)
-        spec = await model.defaultSpec(tape: c.tape.id, event: c.event.id)
-        working = false
+        // Switched to another event while frames were loading: that event's task takes over.
+        guard !Task.isCancelled else { return }
+        let made = await model.defaultSpec(tape: c.tape.id, event: c.event.id)
+        guard !Task.isCancelled, selection == c.event.id else { return }
+        spec = made
         regrade()
     }
 

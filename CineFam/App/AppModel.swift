@@ -93,6 +93,14 @@ final class AppModel {
     var libraryPersonFilter: String?
     private let analyzer = Analyzer()
 
+    /// Shows an error to the user, except cancellations: those happen on purpose (switching
+    /// events in Poster Studio, stopping a render) and aren't failures.
+    func report(_ error: Error) {
+        if error is CancellationError || Task.isCancelled { return }
+        if (error as NSError).domain == NSCocoaErrorDomain && (error as NSError).code == NSUserCancelledError { return }
+        errorMessage = error.localizedDescription
+    }
+
     // MARK: Storage
 
     nonisolated static var supportFolder: URL {
@@ -446,7 +454,7 @@ final class AppModel {
                 }
             }
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
         }
     }
 
@@ -497,7 +505,7 @@ final class AppModel {
                 if let i = t.events.firstIndex(where: { $0.id == eventID }) { t.events[i].words = words }
             }
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
         }
     }
 
@@ -556,7 +564,7 @@ final class AppModel {
             mutateTape(tapeID) { $0.status = .needsReview }
             return false
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
             mutateTape(tapeID) { $0.status = .needsReview }
             return false
         }
@@ -580,7 +588,7 @@ final class AppModel {
                 previewURL = url
             } catch is CancellationError {
             } catch {
-                errorMessage = error.localizedDescription
+                report(error)
             }
             previewProgress = nil
         }
@@ -609,7 +617,7 @@ final class AppModel {
             heroCandidates[eventID] = try await HeroFramePicker().candidates(
                 for: event, in: tape, restoredMaster: restoredMaster(for: event)) { _ in }
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
         }
     }
 
@@ -620,7 +628,7 @@ final class AppModel {
             heroCandidates[eventID, default: []].insert(c, at: 0)
             return c
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
             return nil
         }
     }
@@ -647,7 +655,7 @@ final class AppModel {
                 }
             }
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
         }
     }
 
@@ -678,7 +686,7 @@ final class AppModel {
             updated.illustratedImage = url
             return updated
         } catch {
-            errorMessage = error.localizedDescription
+            report(error)
             return nil
         }
     }
@@ -709,7 +717,7 @@ final class AppModel {
                     Task { @MainActor [weak self] in self?.ffmpegInstallProgress = p }
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                report(error)
             }
             ffmpegInstallProgress = nil
             checkFFmpeg()
@@ -731,7 +739,7 @@ final class AppModel {
                     Task { @MainActor [weak self] in self?.esrganInstallProgress = p }
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                report(error)
             }
             esrganInstallProgress = nil
         }
