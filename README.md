@@ -10,8 +10,11 @@ Design: *Home Video Restoration App — Mac Design* (Claude Design canvas).
 
 ## Run it
 
-1. Install FFmpeg (free): `brew install ffmpeg`
-2. Open `CineFam.xcodeproj` in Xcode 26 and run (macOS 26, Apple silicon).
+1. Open `CineFam.xcodeproj` in Xcode 26 and run (macOS 26, Apple silicon).
+2. The first time, click **Install FFmpeg** (about 38 MB). CineFam downloads FFmpeg 6.1.1
+   from the ffmpeg-static GitHub releases, checks it against pinned SHA-256 hashes and keeps
+   it in `~/Library/Application Support/CineFam/Tools/ffmpeg`. If FFmpeg is already installed
+   (e.g. `brew install ffmpeg`), CineFam finds it and skips this step.
 3. Drag digitized tapes (MOV, AVI, DV, MP4…) or a whole folder of them into the window, or
    **File › Import Tapes or Folder…** (⇧⌘I). Folders are searched inside, sorted by name.
 4. CineFam makes a 360p preview copy and analyzes it: dead space, events, then for each
@@ -118,6 +121,15 @@ keyword match names events ("Birthday – Jul 4, 1996"). Both can be turned off 
   across very different lighting or ages.
 - **Search** covers titles, summaries, keywords, people, tape labels and everything said;
   results show where the words were spoken. Filter the library by person.
+
+## FFmpeg and licensing
+
+CineFam runs FFmpeg as a separate program and never links it. The one-click install
+downloads a static build (GPL, built with nonfree options) at the user's request, which is
+fine for personal use. A public CineFam release that ships FFmpeg inside the app should
+bundle an **LGPL** build instead (no x264/x265: the Windows MP4 preset and preview copies would
+switch to `h264_videotoolbox`) and put it in `Contents/Resources/bin`, which CineFam already
+checks first.
 
 ## Restoration
 

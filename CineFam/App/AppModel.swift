@@ -30,6 +30,9 @@ final class AppModel {
     }
     /// "Restoring event 2 of 7…" while exporting.
     var renderStage: String?
+    /// Whether ffmpeg/ffprobe can be found (checked at launch and after installing).
+    var ffmpegReady = FFmpeg.isInstalled
+    var ffmpegInstallProgress: Double?
     var esrganInstallProgress: Double?
 
     // Restoration preview
@@ -683,6 +686,28 @@ final class AppModel {
             }
             posterBatchProgress = nil
         }
+    }
+
+    func installFFmpeg() {
+        guard ffmpegInstallProgress == nil else { return }
+        ffmpegInstallProgress = 0
+        Task {
+            do {
+                try await FFmpegInstaller.install { p in
+                    Task { @MainActor [weak self] in self?.ffmpegInstallProgress = p }
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            ffmpegInstallProgress = nil
+            checkFFmpeg()
+        }
+    }
+
+    /// Looks again (e.g. after installing with Homebrew) and starts any waiting work.
+    func checkFFmpeg() {
+        ffmpegReady = FFmpeg.isInstalled
+        if ffmpegReady { runQueue() }
     }
 
     func installRealESRGAN() {

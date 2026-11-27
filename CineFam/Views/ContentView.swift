@@ -11,12 +11,8 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 300)
         } detail: {
             Group {
-                if !FFmpeg.isInstalled {
-                    ContentUnavailableView {
-                        Label("FFmpeg Needed", systemImage: "wrench.and.screwdriver")
-                    } description: {
-                        Text("CineFam uses the free FFmpeg tools to read and write video.\nIn Terminal, run `brew install ffmpeg`, then reopen CineFam.")
-                    }
+                if !model.ffmpegReady {
+                    FFmpegSetupView()
                 } else {
                     switch model.selection {
                     case .tape(let id)? where model.tape(id) != nil:

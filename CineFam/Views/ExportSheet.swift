@@ -134,10 +134,17 @@ struct SettingsView: View {
                                value: EventNamer.isModelAvailable ? "Available" : "Off — simple titles are used")
             }
             LabeledContent("FFmpeg") {
-                if let url = FFmpeg.url(for: "ffmpeg") {
-                    Text(url.path).textSelection(.enabled)
+                if let p = model.ffmpegInstallProgress {
+                    ProgressView(value: p).frame(width: 140)
+                } else if let url = FFmpeg.url(for: "ffmpeg") {
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(url.path).font(.caption).textSelection(.enabled)
+                        if url.path.hasPrefix(FFmpegInstaller.folder.path) {
+                            Button("Reinstall") { model.installFFmpeg() }.controlSize(.small)
+                        }
+                    }
                 } else {
-                    Text("Not found — run `brew install ffmpeg`").foregroundStyle(.red)
+                    Button("Install FFmpeg (\(FFmpegInstaller.downloadSize))") { model.installFFmpeg() }
                 }
             }
             Section("Restoration") {

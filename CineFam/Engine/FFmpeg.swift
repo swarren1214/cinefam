@@ -7,7 +7,7 @@ enum FFmpegError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notInstalled:
-            "FFmpeg wasn't found. Install it with `brew install ffmpeg`, then try again."
+            "FFmpeg isn't installed yet. Install it from CineFam's setup screen or Settings."
         case .failed(let tool, let code, let log):
             "\(tool) exited with code \(code).\n\(log.suffix(800))"
         }
@@ -16,14 +16,15 @@ enum FFmpegError: LocalizedError {
 
 /// Finds and runs the ffmpeg / ffprobe command-line tools.
 ///
-/// Looks in the app bundle first (Contents/Resources/bin, for a future bundled build),
-/// then the usual Homebrew locations.
+/// Looks in the app bundle first (Contents/Resources/bin, for a future bundled build), then
+/// the copy CineFam downloaded (FFmpegInstaller), then the usual Homebrew locations.
 enum FFmpeg {
     static func url(for tool: String) -> URL? {
         var candidates: [URL] = []
         if let res = Bundle.main.resourceURL {
             candidates.append(res.appending(path: "bin/\(tool)"))
         }
+        candidates.append(FFmpegInstaller.folder.appending(path: tool))
         candidates += ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map {
             URL(filePath: $0).appending(path: tool)
         }
