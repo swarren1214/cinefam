@@ -15,17 +15,24 @@ struct TapeReviewView: View {
     var body: some View {
         @Bindable var model = model
         if let tape {
-            VStack(spacing: 12) {
-                content(tape)
+            // A plain side panel rather than .inspector: swapping the inspector's contents
+            // while a tape was analyzing sent AppKit into a layout loop and crashed.
+            HStack(spacing: 0) {
+                VStack(spacing: 12) {
+                    content(tape)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if model.showInspector {
+                    Divider()
+                    inspector(tape)
+                        .frame(width: 330)
+                        .frame(maxHeight: .infinity)
+                }
             }
-            .padding(12)
             .navigationTitle(tape.label)
             .navigationSubtitle(subtitle(tape))
             .toolbar { toolbar(tape) }
-            .inspector(isPresented: $model.showInspector) {
-                inspector(tape)
-                    .inspectorColumnWidth(min: 280, ideal: 320, max: 400)
-            }
             .onAppear { load(tape) }
             .onChange(of: tape.proxyURL) { if let t = self.tape { load(t) } }
             .onChange(of: tapeID) { if let t = self.tape { load(t) } }
@@ -64,6 +71,17 @@ struct TapeReviewView: View {
                 Button("Try Again") { model.reanalyze(tape.id) }.buttonStyle(.glassProminent)
             }
         default:
+            if case .rendering(let p) = tape.status {
+                HStack(spacing: 10) {
+                    ProgressView(value: p).frame(width: 200)
+                    Text(model.renderStage ?? "Exporting").lineLimit(1)
+                    Spacer()
+                    Text("\(Int(p * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .glassEffect(.regular, in: .capsule)
+            }
             VideoPlayer(player: player)
                 .clipShape(.rect(cornerRadius: 16))
                 .overlay(alignment: .topLeading) {
@@ -134,9 +152,9 @@ struct TapeReviewView: View {
         if let info = tape.info { parts.append(info.duration.clock) }
         parts.append("\(tape.events.count) events")
         if tape.deadDuration > 0 { parts.append("\(tape.deadDuration.friendlyLength) dead space") }
-        if case .rendering(let p) = tape.status {
-            parts.append("\(model.renderStage ?? "Exporting") · \(Int(p * 100))%")
-        }
+        // Kept steady while work runs: a title bar that changes many times a second makes
+        // the window re-lay-out its toolbar constantly. Progress shows in the page instead.
+        if tape.status.isBusy { parts.append(tape.status.isRendering ? "Exporting" : "Analyzing") }
         return parts.joined(separator: " · ")
     }
 

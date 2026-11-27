@@ -37,6 +37,11 @@ enum TapeStatus: Codable, Hashable {
         }
     }
 
+    var isRendering: Bool {
+        if case .rendering = self { return true }
+        return false
+    }
+
     var isBusy: Bool {
         switch self {
         case .analyzing, .rendering: true
