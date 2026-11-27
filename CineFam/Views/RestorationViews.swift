@@ -1,3 +1,4 @@
+import Combine
 import AVKit
 import SwiftUI
 
@@ -69,7 +70,7 @@ struct ESRGANStatusRow: View {
     }
 }
 
-/// Plays a 10-second original | restored comparison and lets you adjust settings.
+/// Plays a 10-second before/after comparison with a draggable split, and lets you adjust settings.
 struct RestorePreviewSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -78,6 +79,8 @@ struct RestorePreviewSheet: View {
     let time: TimeInterval
 
     @State private var player = AVPlayer()
+    /// Width ÷ height of one half of the side-by-side preview clip.
+    @State private var aspect: CGFloat = 4 / 3
 
     var body: some View {
         VStack(spacing: 0) {
@@ -85,7 +88,11 @@ struct RestorePreviewSheet: View {
                 ZStack {
                     Color.black
                     if let url = model.previewURL {
-                        VideoPlayer(player: player)
+                        // The clip holds original | restored side by side, so one player drives
+                        // both sides of the split and they can never drift apart.
+                        SplitCompareView(original: player, restored: player, aspect: aspect,
+                                         originalRect: SplitCompareView.leftHalf,
+                                         restoredRect: SplitCompareView.rightHalf)
                             .onAppear { play(url) }
                             .onChange(of: url) { play(url) }
                     } else if let p = model.previewProgress {
@@ -95,23 +102,18 @@ struct RestorePreviewSheet: View {
                         }
                     }
                 }
-                .overlay(alignment: .top) {
-                    HStack {
-                        Text("Original")
-                        Spacer()
-                        Text("Restored")
-                    }
-                    .font(.callout.weight(.semibold))
-                    .padding(.horizontal, 14).padding(.vertical, 6)
-                    .glassEffect(.regular, in: .capsule)
-                    .padding(12)
+                .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { n in
+                    // Loop the 10 seconds.
+                    guard (n.object as? AVPlayerItem) === player.currentItem else { return }
+                    player.seek(to: .zero)
+                    player.play()
                 }
                 Form { RestorationSettingsSection() }
                     .formStyle(.grouped)
                     .frame(width: 340)
             }
             HStack {
-                Text("Compare the same moment before and after. Change settings, then update.")
+                Text("Drag the line to compare the same moment before and after. Change settings, then update.")
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Close") { model.cancelPreview(); dismiss() }
@@ -130,5 +132,11 @@ struct RestorePreviewSheet: View {
     private func play(_ url: URL) {
         player.replaceCurrentItem(with: AVPlayerItem(url: url))
         player.play()
+        Task {
+            if let track = try? await AVURLAsset(url: url).loadTracks(withMediaType: .video).first,
+               let size = try? await track.load(.naturalSize), size.height > 0 {
+                aspect = size.width / 2 / size.height
+            }
+        }
     }
 }

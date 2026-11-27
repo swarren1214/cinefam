@@ -146,13 +146,19 @@ struct Restorer {
         Self.mastersFolder.appending(path: "\(event.id.uuidString)-\(settings.fingerprint(event: event, height: targetHeight)).mov")
     }
 
+    /// "Clean up edges" trims tape-edge noise: 1% off the left, right and top, 3% off the bottom
+    /// (where VHS head-switching noise lives). Fractions of the picture.
+    struct EdgeCrop: Sendable { var left, top, width, height: Double }
+    static let edgeCrop = EdgeCrop(left: 0.01, top: 0.01, width: 0.98, height: 0.96)
+    static let edgeCropFilter = "crop=trunc(iw*0.98/2)*2:trunc(ih*0.96/2)*2:trunc(iw*0.01):trunc(ih*0.01)"
+
     // MARK: Filter graphs (same strings as prototype/restore.py)
 
     static func prepassFilter(_ s: RestoreSettings, interlaced: Bool) -> String {
         var f: [String] = []
         if interlaced { f.append(s.smoothMotion ? "bwdif=mode=send_field" : "bwdif=mode=send_frame") }
         f.append("scale=trunc(iw*sar/2)*2:ih:flags=lanczos,setsar=1")
-        if s.cleanEdges { f.append("crop=trunc(iw*0.98/2)*2:trunc(ih*0.96/2)*2:trunc(iw*0.01):trunc(ih*0.01)") }
+        if s.cleanEdges { f.append(Self.edgeCropFilter) }
         switch s.denoise {
         case .light: f.append("hqdn3d=2:3:3:4.5")
         case .strong: f.append("hqdn3d=4:6:6:9")
@@ -289,20 +295,21 @@ struct Restorer {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let stamp = "\(event.id.uuidString)-\(Int(start * 10))-\(settings.fingerprint(event: event, height: targetHeight))"
         let master = folder.appending(path: "\(stamp)-restored.mov")
-        let sideBySide = folder.appending(path: "\(stamp)-compare.mp4")
+        let sideBySide = folder.appending(path: "\(stamp)-compare-v2.mp4")
         if FileManager.default.fileExists(atPath: sideBySide.path) { progress(1); return sideBySide }
 
         _ = try await restore(event, in: tape, range: start...end, output: master) { progress($0 * 0.9) }
         let mp = try await Self.probeFrames(master)
         let deint = tape.info?.isInterlaced ?? true ? "bwdif=mode=send_frame," : ""
+        let trim = settings.cleanEdges ? Self.edgeCropFilter + "," : ""
         try await FFmpeg.run("ffmpeg", [
             "-hide_banner", "-y", "-loglevel", "error",
             "-ss", String(format: "%.3f", start), "-to", String(format: "%.3f", end), "-i", tape.sourceURL.path,
             "-i", master.path,
             "-filter_complex",
-            "[0:v]\(deint)scale=trunc(iw*sar/2)*2:ih,setsar=1,scale=\(mp.width):\(mp.height):flags=neighbor,fps=\(mp.rate)[a];"
+            "[0:v]\(deint)scale=trunc(iw*sar/2)*2:ih,setsar=1,\(trim)scale=\(mp.width):\(mp.height):flags=neighbor,fps=\(mp.rate)[a];"
                 + "[1:v]setsar=1[b];[a][b]hstack=inputs=2,scale=-2:min(ih\\,1080)[v]",
-            "-map", "[v]", "-map", "1:a?", "-c:v", "h264_videotoolbox", "-b:v", "12M",
+            "-map", "[v]", "-map", "1:a?", "-c:v", "h264_videotoolbox", "-b:v", "40M",
             "-c:a", "aac", "-shortest", sideBySide.path])
         try? FileManager.default.removeItem(at: master)
         progress(1)

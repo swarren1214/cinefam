@@ -1,4 +1,5 @@
 import AVKit
+import Combine
 import SwiftUI
 
 /// Stage 6: review a tape — play it, check the proposed events, fix them, then export.
@@ -11,15 +12,20 @@ struct TapeReviewView: View {
     @State private var timeObserver: Any?
 
     /// What the player shows: the original tape (full quality when macOS can play it, else the
-    /// 360p working copy) or the restored version of the selected event.
+    /// 360p working copy), the restored version of the selected event, or both split by a line.
     enum ViewSource: String, CaseIterable, Identifiable {
-        case original = "Original", restored = "Restored"
+        case original = "Original", compare = "Compare", restored = "Restored"
         var id: Self { self }
     }
     @State private var source: ViewSource = .original
     /// Tape time of the player's 0:00 (an event's start when playing its restored copy).
     @State private var offset: TimeInterval = 0
     @State private var originalPlayable: Bool?
+    /// Compare mode: plays the restored copy in step with the original player.
+    @State private var restoredPlayer = AVPlayer()
+    @State private var restoredAspect: CGFloat = 4 / 3
+    /// Last play rate mirrored onto the restored player (the rate publisher re-fires on redraws).
+    @State private var syncedRate: Float?
 
     private var tape: Tape? { model.tape(tapeID) }
 
@@ -56,12 +62,17 @@ struct TapeReviewView: View {
             .onChange(of: source) { if let t = self.tape { reloadPlayer(t, at: currentTime) } }
             .onChange(of: model.selectedEventID) {
                 // A restored copy is per event: picking another event loads its copy.
-                if source == .restored, let t = self.tape,
+                if source != .original, let t = self.tape,
                    let e = t.events.first(where: { $0.id == model.selectedEventID }) {
                     reloadPlayer(t, at: e.start)
                 }
             }
-            .onDisappear { stopObserving() }
+            .onChange(of: tape.status.isRendering) {
+                // An export just finished: its restored copies are now available to watch.
+                if source != .original, let t = self.tape { reloadPlayer(t, at: currentTime) }
+            }
+            .onDisappear { stopObserving(); restoredPlayer.pause() }
+            .onReceive(player.publisher(for: \.rate)) { syncRestored(rate: $0) }
             .sheet(isPresented: $model.showRestorePreview) {
                 if let id = model.selectedEventID ?? tape.events.first?.id {
                     RestorePreviewSheet(tapeID: tape.id, eventID: id, time: currentTime)
@@ -110,10 +121,18 @@ struct TapeReviewView: View {
             if debugHide.contains("player") {
                 Color.black.clipShape(.rect(cornerRadius: 16))
             } else {
-                VideoPlayer(player: player)
+                Group {
+                    if source == .compare, restoredMaster(tape) != nil {
+                        SplitCompareView(original: player, restored: restoredPlayer, aspect: restoredAspect,
+                                         leftLabel: originalLabel(tape), rightLabel: restoredLabel,
+                                         originalRect: originalRectForCompare)
+                    } else {
+                        VideoPlayer(player: player)
+                    }
+                }
                     .clipShape(.rect(cornerRadius: 16))
                     .overlay {
-                        if source == .restored, restoredMaster(tape) == nil {
+                        if source != .original, restoredMaster(tape) == nil {
                             ZStack {
                                 Color.black.opacity(0.8)
                                 VStack(spacing: 10) {
@@ -133,12 +152,14 @@ struct TapeReviewView: View {
                         }
                     }
                     .overlay(alignment: .topTrailing) {
+                        if source != .compare {
                         Text(sourceLabel(tape))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 10).padding(.vertical, 5)
                             .background(.black.opacity(0.55), in: .capsule)
                             .padding(12)
+                        }
                     }
                     .overlay(alignment: .topLeading) {
                         if let e = event(at: currentTime, in: tape) {
@@ -187,7 +208,7 @@ struct TapeReviewView: View {
                 ForEach(ViewSource.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
-            .help("Watch the original tape, or the restored version of the selected event")
+            .help("Watch the original tape, compare it with the restored version using a draggable line, or watch the restored version")
             .disabled(tape.events.isEmpty)
         }
         ToolbarItemGroup {
@@ -250,18 +271,69 @@ struct TapeReviewView: View {
     }
 
     private func sourceLabel(_ tape: Tape) -> String {
-        if source == .restored, restoredMaster(tape) != nil {
-            let h = model.exportSettings.resolution.height.map { "\($0)p" } ?? "original size"
-            return "Restored · \(h)"
-        }
+        if source == .restored, restoredMaster(tape) != nil { return restoredLabel }
+        return originalLabel(tape)
+    }
+
+    private var restoredLabel: String {
+        "Restored · " + (model.exportSettings.resolution.height.map { "\($0)p" } ?? "original size")
+    }
+
+    private func originalLabel(_ tape: Tape) -> String {
         if originalPlayable == true, let info = tape.info { return "Original · \(info.height)p" }
         return "Working copy · 360p"
+    }
+
+    /// The restored copy had its ragged edges trimmed, so enlarge the original to match.
+    private var originalRectForCompare: @Sendable (CGSize) -> CGRect {
+        let r = model.exportSettings.restore
+        return r.enabled && r.cleanEdges ? SplitCompareView.trimmed(Restorer.edgeCrop) : SplitCompareView.full
+    }
+
+    // MARK: Compare mode sync
+
+    private var selectedEvent: TapeEvent? {
+        tape?.events.first { $0.id == model.selectedEventID }
+    }
+
+    /// Mirror play/pause onto the restored player, starting from the exact same moment.
+    private func syncRestored(rate: Float, at tapeTime: TimeInterval? = nil) {
+        guard source == .compare, let e = selectedEvent, restoredPlayer.currentItem != nil else { return }
+        guard rate != syncedRate || tapeTime != nil else { return }
+        syncedRate = rate
+        let rp = restoredPlayer
+        rp.pause()
+        let target = (tapeTime ?? player.currentTime().seconds + offset) - e.start
+        guard target >= 0 else { return }
+        rp.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+            Task { @MainActor in if rate != 0 { rp.rate = rate } }
+        }
     }
 
     private func reloadPlayer(_ tape: Tape, at time: TimeInterval) {
         stopObserving()
         var url: URL?
         var newOffset: TimeInterval = 0
+        var time = time
+        let event = tape.events.first(where: { $0.id == model.selectedEventID })
+        let master = event.flatMap { model.restoredMaster(for: $0) }
+        if source == .compare, let event, let master {
+            // Original plays as normal; the restored copy follows it.
+            if (restoredPlayer.currentItem?.asset as? AVURLAsset)?.url != master {
+                restoredPlayer.replaceCurrentItem(with: AVPlayerItem(url: master))
+                restoredPlayer.isMuted = true
+                Task {
+                    if let track = try? await AVURLAsset(url: master).loadTracks(withMediaType: .video).first,
+                       let size = try? await track.load(.naturalSize), size.height > 0 {
+                        restoredAspect = size.width / size.height
+                    }
+                }
+            }
+            if !(event.start...event.end).contains(time) { time = event.start }
+        } else {
+            restoredPlayer.pause()
+            restoredPlayer.replaceCurrentItem(with: nil)
+        }
         if source == .restored, let e = tape.events.first(where: { $0.id == model.selectedEventID }),
            let master = model.restoredMaster(for: e) {
             url = master
@@ -276,11 +348,23 @@ struct TapeReviewView: View {
             player.replaceCurrentItem(with: AVPlayerItem(url: url))
         }
         offset = newOffset
+        let comparing = source == .compare && master != nil
+        let eventStart = event?.start ?? 0
+        let main = player, rp = restoredPlayer
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
                                                       queue: .main) { t in
             currentTime = t.seconds + newOffset
+            // Keep the restored side within a few frames of the original while playing.
+            if comparing, main.rate != 0 {
+                let target = t.seconds - eventStart
+                if target >= 0, abs(rp.currentTime().seconds - target) > 0.2 {
+                    rp.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                            toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            }
         }
         seek(to: time)
+        if comparing { syncRestored(rate: player.rate, at: time) }
     }
 
     private func stopObserving() {
@@ -291,6 +375,10 @@ struct TapeReviewView: View {
     private func seek(to time: TimeInterval) {
         player.seek(to: CMTime(seconds: max(0, time - offset), preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: .zero)
+        if source == .compare, let e = selectedEvent, restoredPlayer.currentItem != nil {
+            restoredPlayer.seek(to: CMTime(seconds: max(0, time - e.start), preferredTimescale: 600),
+                                toleranceBefore: .zero, toleranceAfter: .zero)
+        }
         currentTime = time
     }
 
