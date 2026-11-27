@@ -49,6 +49,10 @@ struct PosterStudioView: View {
         .task(id: selection) { await loadSpec() }
         .onChange(of: spec?.heroImage) { regrade() }
         .onChange(of: spec?.grade) { regrade() }
+        .onChange(of: spec?.style) { regrade() }
+        .onChange(of: spec?.styleStrength) { regrade() }
+        .onChange(of: spec?.illustratedImage) { regrade() }
+        .task { await model.checkImagePlayground() }
     }
 
     // MARK: Columns
@@ -153,13 +157,41 @@ struct PosterStudioView: View {
                     }
                 }
 
-                Section("Look") {
-                    Picker("Style", selection: .constant(0)) {
-                        Text("Photo").tag(0)
-                        Text("Illustrated (Phase 6)").tag(1)
+                Section {
+                    Picker("Style", selection: Binding(get: { spec?.drawStyle ?? .photo },
+                                                       set: { spec?.style = $0 })) {
+                        Text(PosterStyle.photo.title).tag(PosterStyle.photo)
+                        Section("Drawn on this Mac") {
+                            ForEach(PosterStyle.filterStyles) { Text($0.title).tag($0) }
+                        }
+                        Section("Image Playground") {
+                            ForEach(PosterStyle.aiStyles) { Text($0.title).tag($0) }
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .disabled(true)
+                    if spec?.drawStyle.isFilter == true {
+                        LabeledContent("Strength") {
+                            HStack {
+                                Slider(value: Binding(get: { spec?.strength ?? 0.85 },
+                                                      set: { spec?.styleStrength = $0 }), in: 0.3...1)
+                                Text("\(Int((spec?.strength ?? 0.85) * 100))%")
+                                    .monospacedDigit().frame(width: 40, alignment: .trailing)
+                            }
+                        }
+                    }
+                    if spec?.drawStyle.isAI == true {
+                        illustrationRow(c)
+                    }
+                } header: {
+                    Text("Style")
+                } footer: {
+                    if spec?.drawStyle.isAI == true {
+                        Text("Image Playground redraws the frame on this Mac. Faces become a likeness, not the real person — use a Drawn style to keep real faces.")
+                    } else if spec?.drawStyle.isFilter == true {
+                        Text("Drawn styles keep every face as filmed. Lower strength mixes in more of the photo.")
+                    }
+                }
+
+                Section("Look") {
                     Picker("Color grade", selection: binding.grade) {
                         ForEach(PosterGrade.allCases) { Text($0.title).tag($0) }
                     }
@@ -198,6 +230,27 @@ struct PosterStudioView: View {
         }
     }
 
+    @ViewBuilder
+    private func illustrationRow(_ c: (tape: Tape, event: TapeEvent)) -> some View {
+        if model.imagePlaygroundAvailable == false {
+            Label("Image Playground needs Apple Intelligence turned on.", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.secondary)
+        } else if model.illustratingEventID == c.event.id {
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Drawing…").foregroundStyle(.secondary)
+            }
+        } else {
+            Button(spec?.usesIllustration == true ? "Draw Again" : "Draw with Image Playground",
+                   systemImage: "paintbrush.pointed") {
+                guard let s = spec else { return }
+                Task {
+                    if let updated = await model.illustrate(s, tape: c.tape.id, event: c.event.id) { spec = updated }
+                }
+            }
+        }
+    }
+
     // MARK: Actions
 
     private func loadSpec() async {
@@ -221,6 +274,7 @@ struct PosterStudioView: View {
     }
 
     private func choose(_ h: HeroCandidate) {
+        spec?.illustratedImage = nil      // an illustration of the old frame no longer fits
         spec?.heroImage = h.imageURL
         spec?.heroTime = h.time
         spec?.focusX = h.focusX

@@ -40,6 +40,8 @@ final class AppModel {
     var heroCandidates: [UUID: [HeroCandidate]] = [:]
     var loadingHeroes: Set<UUID> = []
     var posterBatchProgress: Double?
+    var illustratingEventID: UUID?
+    var imagePlaygroundAvailable: Bool?
 
     var showImporter = false
     var showExport = false
@@ -428,6 +430,33 @@ final class AppModel {
     func makeDefaultPoster(tape tapeID: UUID, event eventID: UUID) async {
         guard let spec = await defaultSpec(tape: tapeID, event: eventID) else { return }
         savePoster(spec, tape: tapeID, event: eventID)
+    }
+
+    func checkImagePlayground() async {
+        guard imagePlaygroundAvailable == nil else { return }
+        imagePlaygroundAvailable = await IllustrationEngine.isAvailable()
+    }
+
+    /// Redraws the spec's hero still with Image Playground; returns the spec pointing at it.
+    func illustrate(_ spec: PosterSpec, tape tapeID: UUID, event eventID: UUID) async -> PosterSpec? {
+        guard spec.drawStyle.isAI, let event = tape(tapeID)?.events.first(where: { $0.id == eventID }),
+              let still = HeroFramePicker.loadImage(spec.heroImage) else { return nil }
+        illustratingEventID = eventID
+        defer { illustratingEventID = nil }
+        // Describe the scene, not the people: generators shouldn't guess at names.
+        var description = event.summary.isEmpty ? PosterCopy.title(for: event) : event.summary
+        if let tags = event.visualTags, !tags.isEmpty { description += " " + tags.prefix(4).joined(separator: ", ") }
+        do {
+            let url = try await IllustrationEngine.illustrate(still, style: spec.drawStyle, description: description,
+                                                              saveIn: HeroFramePicker.folder(for: event))
+            var updated = spec
+            if let old = spec.illustratedImage, old != url { try? FileManager.default.removeItem(at: old) }
+            updated.illustratedImage = url
+            return updated
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
     }
 
     var eventsMissingPosters: [(tape: Tape, event: TapeEvent)] {

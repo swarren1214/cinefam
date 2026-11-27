@@ -23,6 +23,20 @@ struct PosterSpec: Codable, Hashable {
     var posterURL: URL?
     var fanartURL: URL?
     var renderedAt: Date?
+
+    // Phase 6. Optional so posters saved before them still load.
+    var style: PosterStyle?
+    var styleStrength: Double?
+    /// Image Playground result for an AI style (kept so it isn't regenerated every render).
+    var illustratedImage: URL?
+
+    var drawStyle: PosterStyle { style ?? .photo }
+    var strength: Double { styleStrength ?? 0.85 }
+    var usesIllustration: Bool {
+        drawStyle.isAI && illustratedImage.map { FileManager.default.fileExists(atPath: $0.path) } == true
+    }
+    /// Generated illustrations have their own composition, so crop them from the centre.
+    var focus: CGPoint { usesIllustration ? CGPoint(x: 0.5, y: 0.45) : CGPoint(x: focusX, y: focusY) }
 }
 
 enum PosterGrade: String, Codable, CaseIterable, Identifiable {
@@ -137,7 +151,7 @@ struct PosterCanvas: View {
     // Classic one-sheet: full-bleed photo, title at the bottom.
     private var classic: some View {
         ZStack(alignment: .bottom) {
-            FocusFill(image: image, focus: CGPoint(x: spec.focusX, y: spec.focusY), size: Self.size)
+            FocusFill(image: image, focus: spec.focus, size: Self.size)
             LinearGradient(colors: [.clear, .black.opacity(0.55), .black.opacity(0.95)],
                            startPoint: .init(x: 0.5, y: 0.45), endPoint: .bottom)
             LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .init(x: 0.5, y: 0.18))
@@ -175,7 +189,7 @@ struct PosterCanvas: View {
         ZStack {
             Color(red: 0.95, green: 0.93, blue: 0.89)
             VStack(alignment: .leading, spacing: 34) {
-                FocusFill(image: image, focus: CGPoint(x: spec.focusX, y: spec.focusY),
+                FocusFill(image: image, focus: spec.focus,
                           size: CGSize(width: 840, height: 900))
                     .frame(width: 840, height: 900).clipped()
                 Text(spec.title)
@@ -204,7 +218,7 @@ struct PosterCanvas: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) { ForEach(0..<5, id: \.self) { stripes[$0].frame(height: 34) } }
                     .padding(.top, 70)
-                FocusFill(image: image, focus: CGPoint(x: spec.focusX, y: spec.focusY),
+                FocusFill(image: image, focus: spec.focus,
                           size: CGSize(width: 1000, height: 820))
                     .frame(width: 1000, height: 820).clipped()
                     .padding(.top, 50)
@@ -233,7 +247,7 @@ struct PosterCanvas: View {
     // Title card: the whole frame on a blurred bed, title over the middle.
     private var titleCard: some View {
         ZStack {
-            FocusFill(image: image, focus: CGPoint(x: spec.focusX, y: spec.focusY), size: Self.size)
+            FocusFill(image: image, focus: spec.focus, size: Self.size)
                 .blur(radius: 40).overlay(Color.black.opacity(0.45))
             if let image {
                 Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit)
@@ -294,7 +308,7 @@ struct FanartCanvas: View {
     let image: CGImage?
 
     var body: some View {
-        FocusFill(image: image, focus: CGPoint(x: spec.focusX, y: spec.focusY), size: Self.size)
+        FocusFill(image: image, focus: spec.focus, size: Self.size)
     }
 }
 
@@ -303,12 +317,14 @@ struct FanartCanvas: View {
 enum PosterRenderer {
     static let ciContext = CIContext()
 
-    /// The hero still with the spec's color grade.
+    /// The hero still (or its AI illustration) with the spec's color grade and style.
     static func gradedImage(_ spec: PosterSpec) -> CGImage? {
-        guard let src = CGImageSourceCreateWithURL(spec.heroImage as CFURL, nil),
+        let source = spec.usesIllustration ? spec.illustratedImage! : spec.heroImage
+        guard let src = CGImageSourceCreateWithURL(source as CFURL, nil),
               let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
         let input = CIImage(cgImage: cg)
-        let output = spec.grade.apply(input).cropped(to: input.extent)
+        let graded = spec.grade.apply(input).cropped(to: input.extent)
+        let output = spec.drawStyle.apply(graded, strength: spec.strength).cropped(to: input.extent)
         return ciContext.createCGImage(output, from: input.extent)
     }
 
@@ -342,6 +358,14 @@ enum PosterRenderer {
         var errorDescription: String? {
             self == .render ? "The poster couldn't be drawn." : "The poster couldn't be saved."
         }
+    }
+
+    static func writePNG(_ image: CGImage, to url: URL) throws {
+        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            throw PosterError.write
+        }
+        CGImageDestinationAddImage(dest, image, nil)
+        guard CGImageDestinationFinalize(dest) else { throw PosterError.write }
     }
 
     static func writeJPEG(_ image: CGImage, to url: URL, quality: Double = 0.9) throws {

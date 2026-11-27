@@ -38,7 +38,7 @@ The library lives in `~/Library/Application Support/CineFam/` (`library.json` + 
 | 3 | Dating and naming | ✅ first pass — date-stamp OCR, scene tags, faces, transcripts, AI titles (needs a build in Xcode) |
 | 4 | Restore and export | ✅ first pass — Real-ESRGAN upscaling, cleanup, previews, export in 7 formats (needs a build in Xcode) |
 | 5 | Poster art | ✅ first pass — hero frames, color grades, 4 templates, poster + backdrop (needs a build in Xcode) |
-| 6 | Illustrated posters | ⬜ |
+| 6 | Illustrated posters | ✅ first pass — 4 drawn styles + Image Playground (needs a build in Xcode) |
 | 7 | Library mode | ⬜ |
 
 ## Layout
@@ -54,7 +54,8 @@ CineFam/
              scene tags, faces) · EventNamer (Foundation Models + fallback) ·
              EventEnricher (Phase 3 pipeline, date fill-in) · Restorer (Phase 4 restore +
              upscale, Real-ESRGAN install, previews) · HeroFramePicker (best stills) ·
-             PosterArt (spec, grades, templates, rendering, taglines)
+             PosterArt (spec, grades, templates, rendering, taglines) · PosterStyles
+             (drawn styles, Image Playground)
   Views/     ContentView · SidebarView · LibraryView · TapeReviewView (+ TapeTimeline)
              EventInspector · ExportSheet (+ SettingsView) · RestorationViews · PosterStudioView
 prototype/   Python prototypes + tests: segmentation (1), date stamps (3), restoration (4),
@@ -125,6 +126,13 @@ much slower). With *Standard* upscaling (or before Real-ESRGAN is installed) it'
    top 6, at least 2 s apart, are offered. Vision also finds the subject (biggest face, else
    the salient area) so crops keep it in frame.
 2. **Look**: Core Image grades — Natural, Warm ’80s, Faded Film, Teal & Orange, Black & White.
+   **Style** (Phase 6):
+   - *Drawn on this Mac* — Comic, Screen Print (flat inks + halftone), Pencil Sketch (lines
+     on paper with a color wash) and Retro Print (two-color duotone). Core Image, instant, no
+     downloads, every face kept as filmed; *Strength* mixes the drawing with the photo.
+   - *Image Playground* — Animated, Illustration and Sketch, generated on this Mac by Apple's
+     Image Playground from the still plus a description of the scene (never names). Needs
+     Apple Intelligence. Faces become a likeness. Results are kept with the poster.
 3. **Templates** (SwiftUI, rendered with `ImageRenderer`): Classic One-Sheet, Minimal,
    VHS Box, Title Card. Title, tagline (Apple Intelligence, with a fallback), top line, date
    and credits ("Starring …" from the event's people) are all editable.
@@ -157,5 +165,6 @@ against real tapes first, then copy them across.
 - `dvrescue` for exact MiniDV recording dates.
 - Faces → people names (label once, apply across the library).
 - Tune restoration defaults on real VHS (AI strength, denoise, edge trim).
-- Illustrated poster styles (Phase 6): Stable Diffusion / FLUX img2img, Image Playground.
+- Optional local Stable Diffusion img2img (Apple's ml-stable-diffusion, Core ML) for
+  styles Image Playground doesn't offer — a 2–5 GB model download, so opt-in.
 - Face restoration for poster stills (GFPGAN, Apache 2.0).
