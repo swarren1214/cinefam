@@ -92,18 +92,18 @@ final class AppModel {
 
     // MARK: Storage
 
-    static var supportFolder: URL {
+    nonisolated static var supportFolder: URL {
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appending(path: "CineFam")
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
-    static var proxyFolder: URL {
+    nonisolated static var proxyFolder: URL {
         let url = supportFolder.appending(path: "Proxies")
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
-    private static var libraryFile: URL { supportFolder.appending(path: "library.json") }
+    nonisolated private static var libraryFile: URL { supportFolder.appending(path: "library.json") }
 
     init() {
         load()
