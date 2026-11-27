@@ -63,6 +63,8 @@ CineFam/
   Views/     ContentView · SidebarView · LibraryView · TapeReviewView (+ TapeTimeline)
              EventInspector · ExportSheet (+ SettingsView) · RestorationViews · PosterStudioView
              QueueView · PeopleView
+scripts/     release.sh (signed, notarized DMG) · ExportOptions.plist
+Design/      AppIcon preview · DMG window background
 prototype/   Python prototypes + tests: segmentation (1), date stamps (3), restoration (4),
              hero frames (5), face grouping (7)
 ```
@@ -121,6 +123,34 @@ keyword match names events ("Birthday – Jul 4, 1996"). Both can be turned off 
   across very different lighting or ages.
 - **Search** covers titles, summaries, keywords, people, tape labels and everything said;
   results show where the words were spoken. Filter the library by person.
+
+## Releasing a DMG
+
+`scripts/release.sh` makes `dist/CineFam-<version>.dmg`: a signed, notarized drag-to-Applications
+disk image that opens on any Mac with no Gatekeeper warnings. It archives a Release build,
+signs it with your Developer ID, has Apple notarize it, staples the ticket, builds the styled
+install window (`Design/DMG/background.png`), then signs and notarizes the DMG too.
+
+One-time setup:
+
+1. A **Developer ID Application** certificate: Xcode → Settings → Accounts → Manage
+   Certificates → + → Developer ID Application.
+2. Notarization credentials in your keychain (app-specific password from account.apple.com):
+   `xcrun notarytool store-credentials CineFam --apple-id YOUR_APPLE_ID --team-id BH8R3BX5WF`
+
+Then: set the version in Xcode (CineFam target → General → Version) and run
+`scripts/release.sh` (`--install` also puts it in /Applications; `--no-notarize` for a quick
+local build). The first run asks to let Terminal control Finder — that lays out the window.
+Upload the DMG anywhere (your site, GitHub Releases). FFmpeg and Real-ESRGAN aren't in the
+DMG: each user downloads them inside the app, so the DMG stays small and their licenses stay
+with the user's own download.
+
+## App icon
+
+`CineFam/CineFam.icon` is an Icon Composer file (Xcode 26): an orange glass tile with three
+layers — the cassette shell, its reels and a "restored" sparkle — that macOS renders with
+Liquid Glass, including dark and tinted modes. Open it in Icon Composer to adjust.
+`Design/AppIcon.svg` / `AppIcon-preview.png` are a flat preview.
 
 ## FFmpeg and licensing
 

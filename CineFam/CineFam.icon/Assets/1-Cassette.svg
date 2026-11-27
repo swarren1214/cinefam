@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Cassette shell: window and tape-head opening cut out (even-odd) -->
+  <path fill="#FFFFFF" fill-rule="evenodd" d="
+    M 228 300 H 796 Q 852 300 852 356 V 676 Q 852 732 796 732 H 228 Q 172 732 172 676 V 356 Q 172 300 228 300 Z
+    M 330 396 H 694 Q 734 396 734 436 V 548 Q 734 588 694 588 H 330 Q 290 588 290 548 V 436 Q 290 396 330 396 Z
+    M 392 732 L 424 656 H 600 L 632 732 Z"/>
+</svg>
