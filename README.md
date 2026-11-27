@@ -133,10 +133,14 @@ install window (`Design/DMG/background.png`), then signs and notarizes the DMG t
 
 One-time setup:
 
-1. A **Developer ID Application** certificate: Xcode → Settings → Accounts → Manage
-   Certificates → + → Developer ID Application.
+1. A **Developer ID Application** certificate (Hearth Software LLC already has one; check with
+   `security find-identity -v -p codesigning | grep "Developer ID Application"`). To make one:
+   Xcode → Settings → Accounts → select your Apple Account → select the team (not the
+   Personal Team) → **Manage Certificates…** → + → Developer ID Application. Only the
+   Account Holder can create these.
 2. Notarization credentials in your keychain (app-specific password from account.apple.com):
    `xcrun notarytool store-credentials CineFam --apple-id YOUR_APPLE_ID --team-id BH8R3BX5WF`
+   — or reuse Air Control's: `NOTARY_PROFILE=AirControl scripts/release.sh`.
 
 Then: set the version in Xcode (CineFam target → General → Version) and run
 `scripts/release.sh` (`--install` also puts it in /Applications; `--no-notarize` for a quick

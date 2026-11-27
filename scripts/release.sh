@@ -12,9 +12,12 @@
 # Set the version in Xcode (target CineFam → General → Version) before a release.
 #
 # One-time setup:
-#   1. A "Developer ID Application" certificate: Xcode → Settings → Accounts → Manage Certificates → + .
+#   1. A "Developer ID Application" certificate: Xcode → Settings → Accounts → select your Apple Account
+#      → select the team (not the Personal Team) → Manage Certificates… → + → Developer ID Application.
+#      Only the Account Holder can create one.
 #   2. Notarization credentials saved in your keychain (uses an app-specific password from account.apple.com):
 #        xcrun notarytool store-credentials CineFam --apple-id YOUR_APPLE_ID --team-id BH8R3BX5WF
+#      (Or reuse another app's saved profile: NOTARY_PROFILE=AirControl scripts/release.sh)
 #   The first DMG build asks to let Terminal control Finder — that's what lays out the install window.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -31,7 +34,7 @@ for arg in "$@"; do
     case "$arg" in
         --no-notarize) NOTARIZE=0 ;;
         --install) INSTALL=1 ;;
-        -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown option: $arg (try --help)"; exit 1 ;;
     esac
 done
@@ -42,7 +45,7 @@ fail() { printf '\n\033[31m✗ %s\033[0m\n' "$1"; exit 1; }
 # --- Preflight -----------------------------------------------------------------------------
 IDENTITY=$(security find-identity -v -p codesigning | awk -v t="($TEAM_ID)" '/Developer ID Application/ && index($0, t) {print $2; exit}')
 [ -n "$IDENTITY" ] || fail "No \"Developer ID Application\" certificate for team $TEAM_ID in your keychain.
-  Create one in Xcode → Settings → Accounts → Manage Certificates → + → Developer ID Application."
+  Create one in Xcode → Settings → Accounts → select your team → Manage Certificates… → + → Developer ID Application."
 if [ "$NOTARIZE" = 1 ] && ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
     fail "No notarization credentials saved as \"$PROFILE\". Run once:
   xcrun notarytool store-credentials $PROFILE --apple-id YOUR_APPLE_ID --team-id $TEAM_ID
