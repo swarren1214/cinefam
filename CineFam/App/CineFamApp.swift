@@ -13,7 +13,7 @@ struct CineFamApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Import Tapes…") { model.showImporter = true }
+                Button("Import Tapes or Folder…") { model.showImporter = true }
                     .keyboardShortcut("i", modifiers: [.command, .shift])
             }
             CommandGroup(after: .importExport) {

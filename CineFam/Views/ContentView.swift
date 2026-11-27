@@ -23,19 +23,23 @@ struct ContentView: View {
                         TapeReviewView(tapeID: id)
                     case .posterStudio?:
                         PosterStudioView()
+                    case .queue?:
+                        QueueView()
+                    case .people?:
+                        PeopleView()
                     default:
                         LibraryView()
                     }
                 }
             }
             .dropDestination(for: URL.self) { urls, _ in
-                let videos = urls.filter { Self.isVideo($0) }
+                let videos = urls.flatMap { AppModel.videoFiles(in: $0) }
                 model.importTapes(videos)
                 return !videos.isEmpty
             }
         }
         .fileImporter(isPresented: $model.showImporter,
-                      allowedContentTypes: [.movie, .video, .audiovisualContent],
+                      allowedContentTypes: [.movie, .video, .audiovisualContent, .folder],
                       allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { model.importTapes(urls) }
         }

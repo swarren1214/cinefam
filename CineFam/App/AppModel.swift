@@ -4,6 +4,8 @@ import SwiftUI
 
 enum SidebarItem: Hashable {
     case allMovies
+    case queue
+    case people
     case posterStudio
     case tape(UUID)
 }
@@ -59,6 +61,33 @@ final class AppModel {
     }
 
     private var queueTask: Task<Void, Never>?
+
+    // MARK: Library mode (Phase 7)
+
+    var queuePaused = false
+    /// Tapes finished by the current unattended run, for the "done" notification.
+    private var batchDone = 0
+    private var keepAwake: NSObjectProtocol?
+
+    var autoExport = UserDefaults.standard.bool(forKey: "autoExport") {
+        didSet { UserDefaults.standard.set(autoExport, forKey: "autoExport") }
+    }
+    var autoPosters = UserDefaults.standard.object(forKey: "autoPosters") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoPosters, forKey: "autoPosters") }
+    }
+    var autoPeople = UserDefaults.standard.object(forKey: "autoPeople") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoPeople, forKey: "autoPeople") }
+    }
+    var notifyWhenDone = UserDefaults.standard.object(forKey: "notifyWhenDone") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(notifyWhenDone, forKey: "notifyWhenDone") }
+    }
+
+    // People
+    var faceLibrary = FaceLibrary.load()
+    var faceGroups: [FaceGroup] = []
+    var unsortedFaces: [UUID] = []
+    var faceScanProgress: Double?
+    var libraryPersonFilter: String?
     private let analyzer = Analyzer()
 
     // MARK: Storage
@@ -84,6 +113,7 @@ final class AppModel {
             if case .rendering = tapes[i].status { tapes[i].status = .needsReview }
         }
         runQueue()
+        Task { await regroupFaces() }
     }
 
     func load() {
@@ -141,14 +171,31 @@ final class AppModel {
     // MARK: Import + analysis
 
     func importTapes(_ urls: [URL]) {
-        for url in urls {
+        let files = urls.flatMap { Self.videoFiles(in: $0) }
+        var added = 0
+        for url in files {
             guard !tapes.contains(where: { $0.sourceURL == url }) else { continue }
             let label = url.deletingPathExtension().lastPathComponent
             tapes.append(Tape(sourceURL: url, label: label))
+            added += 1
         }
         save()
-        if let last = tapes.last { selection = .tape(last.id) }
+        // One tape: open it. A shoebox: show the queue.
+        if added == 1, let last = tapes.last { selection = .tape(last.id) }
+        else if added > 1 { selection = .queue }
         runQueue()
+    }
+
+    /// A video file, or every video inside a folder (and its subfolders), sorted by name.
+    static func videoFiles(in url: URL) -> [URL] {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return [] }
+        guard isDir.boolValue else { return ContentView.isVideo(url) ? [url] : [] }
+        let e = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil,
+                                               options: [.skipsHiddenFiles, .skipsPackageDescendants])
+        var out: [URL] = []
+        while let f = e?.nextObject() as? URL { if ContentView.isVideo(f) { out.append(f) } }
+        return out.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 
     func reanalyze(_ id: UUID) {
@@ -164,14 +211,167 @@ final class AppModel {
     }
 
     /// Analyzes queued tapes one at a time.
+    var queuedCount: Int { tapes.filter { $0.status == .queued }.count }
+    var isQueueRunning: Bool { queueTask != nil }
+
+    /// Works through queued tapes one at a time: analyze, then (in library mode) find
+    /// people, make posters and export, without waiting for review.
     func runQueue() {
-        guard queueTask == nil, FFmpeg.isInstalled else { return }
+        guard queueTask == nil, !queuePaused, FFmpeg.isInstalled,
+              tapes.contains(where: { $0.status == .queued }) else { return }
+        batchDone = 0
+        keepAwake = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "CineFam is processing tapes")
         queueTask = Task { [weak self] in
-            while let self, let next = self.tapes.first(where: { $0.status == .queued }) {
+            while let self, !self.queuePaused, !Task.isCancelled,
+                  let next = self.tapes.first(where: { $0.status == .queued }) {
                 await self.analyze(next)
+                guard !Task.isCancelled, self.tape(next.id)?.status == .needsReview else { continue }
+                if self.autoPeople { await self.scanFaces(tape: next.id) }
+                if self.autoExport {
+                    if self.autoPosters { await self.makeMissingPosters(tape: next.id) }
+                    await self.runExport(next.id)
+                }
+                self.batchDone += 1
             }
-            self?.queueTask = nil
+            self?.queueFinished()
         }
+    }
+
+    private func queueFinished() {
+        queueTask = nil
+        if let keepAwake { ProcessInfo.processInfo.endActivity(keepAwake) }
+        keepAwake = nil
+        if batchDone > 0 && notifyWhenDone && !queuePaused {
+            let movies = tapes.reduce(0) { $0 + $1.events.filter { $0.status == .rendered }.count }
+            Notifier.post(title: "CineFam finished \(batchDone) tape\(batchDone == 1 ? "" : "s")",
+                          body: autoExport ? "\(movies) movies are in your library." : "They're ready for review.")
+        }
+    }
+
+    func pauseQueue() { queuePaused = true }
+
+    func resumeQueue() {
+        queuePaused = false
+        runQueue()
+    }
+
+    /// Stops the tape being worked on now; it goes back in the queue.
+    func stopCurrent() {
+        queuePaused = true
+        queueTask?.cancel()
+    }
+
+    func moveToFront(_ id: UUID) {
+        guard let i = tapes.firstIndex(where: { $0.id == id }) else { return }
+        let t = tapes.remove(at: i)
+        let firstQueued = tapes.firstIndex { $0.status == .queued } ?? tapes.count
+        tapes.insert(t, at: firstQueued)
+        save()
+    }
+
+    private func makeMissingPosters(tape tapeID: UUID) async {
+        for e in tape(tapeID)?.events ?? [] where e.status != .discarded && e.posterImageURL == nil {
+            await makeDefaultPoster(tape: tapeID, event: e.id)
+        }
+    }
+
+    // MARK: People
+
+    /// Finds faces in a tape's events, then regroups the whole library.
+    func scanFaces(tape tapeID: UUID) async {
+        guard let tape = self.tape(tapeID) else { return }
+        faceScanProgress = 0
+        let found = await FaceExtractor.scan(tape) { p in
+            Task { @MainActor [weak self] in self?.faceScanProgress = p }
+        }
+        faceLibrary.replaceFaces(of: tapeID, with: found)
+        faceLibrary.save()
+        faceScanProgress = nil
+        await regroupFaces()
+    }
+
+    func scanAllFaces() {
+        Task {
+            for t in tapes where t.status == .needsReview || t.status == .done { await scanFaces(tape: t.id) }
+        }
+    }
+
+    /// Re-runs grouping off the main thread and applies names to events.
+    func regroupFaces() async {
+        let faces = faceLibrary.faces
+        let clusterer = FaceClusterer(threshold: faceLibrary.threshold)
+        let result = await Task.detached(priority: .userInitiated) { clusterer.run(faces) }.value
+        for (id, name) in result.assigned {
+            if let i = faceLibrary.faces.firstIndex(where: { $0.id == id }) { faceLibrary.faces[i].person = name }
+        }
+        faceGroups = result.groups
+        unsortedFaces = result.unsorted
+        faceLibrary.save()
+        applyFaceNames()
+    }
+
+    func face(_ id: UUID) -> FaceRecord? { faceLibrary.faces.first { $0.id == id } }
+
+    func faces(of person: String) -> [FaceRecord] {
+        faceLibrary.faces.filter { $0.person == person }.sorted { $0.quality > $1.quality }
+    }
+
+    /// Names an unnamed group (or adds it to someone already named).
+    func name(_ group: FaceGroup, as rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        for id in group.faceIDs {
+            if let i = faceLibrary.faces.firstIndex(where: { $0.id == id }) { faceLibrary.faces[i].person = name }
+        }
+        faceGroups.removeAll { $0 == group }
+        faceLibrary.save()
+        applyFaceNames()
+        Task { await regroupFaces() }      // other faces may now join this person
+    }
+
+    func rename(person old: String, to rawNew: String) {
+        let new = rawNew.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !new.isEmpty, new != old else { return }
+        for i in faceLibrary.faces.indices where faceLibrary.faces[i].person == old { faceLibrary.faces[i].person = new }
+        for t in tapes.indices {
+            for e in tapes[t].events.indices {
+                tapes[t].events[e].people = tapes[t].events[e].people.map { $0 == old ? new : $0 }
+                    .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            }
+        }
+        faceLibrary.save()
+        save()
+    }
+
+    /// "That's not them": takes a face away from a person.
+    func removeFace(_ id: UUID) {
+        guard let i = faceLibrary.faces.firstIndex(where: { $0.id == id }) else { return }
+        faceLibrary.faces[i].person = nil
+        faceLibrary.save()
+        Task { await regroupFaces() }
+    }
+
+    func setGroupingThreshold(_ value: Double) {
+        faceLibrary.threshold = value
+        faceLibrary.save()
+        Task { await regroupFaces() }
+    }
+
+    /// Adds the names of people seen in each event to its People (typed names are kept).
+    private func applyFaceNames() {
+        var byEvent: [UUID: Set<String>] = [:]
+        for f in faceLibrary.faces { if let p = f.person { byEvent[f.eventID, default: []].insert(p) } }
+        for t in tapes.indices {
+            for e in tapes[t].events.indices {
+                guard let names = byEvent[tapes[t].events[e].id] else { continue }
+                for n in names.sorted() where !tapes[t].events[e].people.contains(n) {
+                    tapes[t].events[e].people.append(n)
+                }
+            }
+        }
+        save()
     }
 
     private func analyze(_ tape: Tape) async {
@@ -289,7 +489,14 @@ final class AppModel {
     // MARK: Export
 
     func exportTape(_ tapeID: UUID) {
-        guard let tape = self.tape(tapeID) else { return }
+        Task { await runExport(tapeID) }
+    }
+
+    /// Restores (if switched on), makes posters (if switched on) and exports every kept
+    /// event of a tape. Returns false if it stopped with an error.
+    @discardableResult
+    func runExport(_ tapeID: UUID) async -> Bool {
+        guard let tape = self.tape(tapeID) else { return false }
         let events = tape.events.filter { $0.status != .discarded }
         let settings = exportSettings
         let exporter = Exporter(settings: settings)
@@ -297,44 +504,46 @@ final class AppModel {
         let restorer = Restorer(settings: settings.restore, targetHeight: settings.resolution.height)
         mutateTape(tapeID) { $0.status = .rendering(progress: 0) }
         exportProgress = 0
-        Task {
-            do {
-                for (n, event) in events.enumerated() {
-                    // Restoring is the slow part: it gets most of each event's share of the bar.
-                    let restoreShare = restoring ? 0.85 : 0.0
-                    func report(_ p: Double) {
-                        let total = (Double(n) + p) / Double(max(events.count, 1))
-                        exportProgress = total
-                        mutateTape(tapeID) { $0.status = .rendering(progress: total) }
-                    }
-                    var master: URL?
-                    if restoring {
-                        renderStage = "Restoring \(n + 1) of \(events.count): \(event.title)"
-                        master = try await restorer.restore(event, in: tape) { p in
-                            Task { @MainActor in report(p * restoreShare) }
-                        }
-                    }
-                    renderStage = "Saving \(n + 1) of \(events.count): \(event.title)"
-                    var current = self.tape(tapeID)?.events.first { $0.id == event.id } ?? event
-                    if current.posterEnabled && current.posterImageURL == nil && settings.metadataAndArt {
-                        await makeDefaultPoster(tape: tapeID, event: event.id)
-                        current = self.tape(tapeID)?.events.first { $0.id == event.id } ?? current
-                    }
-                    _ = try await exporter.export(.init(event: current, tape: tape, posterURL: current.posterImageURL,
-                                                        restoredURL: master, fanartURL: current.poster?.fanartURL)) { p in
-                        Task { @MainActor in report(restoreShare + p * (1 - restoreShare)) }
-                    }
-                    mutateTape(tapeID) { t in
-                        if let i = t.events.firstIndex(where: { $0.id == event.id }) { t.events[i].status = .rendered }
+        defer { exportProgress = nil; renderStage = nil }
+        do {
+            for (n, event) in events.enumerated() {
+                // Restoring is the slow part: it gets most of each event's share of the bar.
+                let restoreShare = restoring ? 0.85 : 0.0
+                func report(_ p: Double) {
+                    let total = (Double(n) + p) / Double(max(events.count, 1))
+                    exportProgress = total
+                    mutateTape(tapeID) { $0.status = .rendering(progress: total) }
+                }
+                var master: URL?
+                if restoring {
+                    renderStage = "Restoring \(n + 1) of \(events.count): \(event.title)"
+                    master = try await restorer.restore(event, in: tape) { p in
+                        Task { @MainActor in report(p * restoreShare) }
                     }
                 }
-                mutateTape(tapeID) { $0.status = .done }
-            } catch {
-                errorMessage = error.localizedDescription
-                mutateTape(tapeID) { $0.status = .needsReview }
+                renderStage = "Saving \(n + 1) of \(events.count): \(event.title)"
+                var current = self.tape(tapeID)?.events.first { $0.id == event.id } ?? event
+                if current.posterEnabled && current.posterImageURL == nil && settings.metadataAndArt {
+                    await makeDefaultPoster(tape: tapeID, event: event.id)
+                    current = self.tape(tapeID)?.events.first { $0.id == event.id } ?? current
+                }
+                _ = try await exporter.export(.init(event: current, tape: tape, posterURL: current.posterImageURL,
+                                                    restoredURL: master, fanartURL: current.poster?.fanartURL)) { p in
+                    Task { @MainActor in report(restoreShare + p * (1 - restoreShare)) }
+                }
+                mutateTape(tapeID) { t in
+                    if let i = t.events.firstIndex(where: { $0.id == event.id }) { t.events[i].status = .rendered }
+                }
             }
-            exportProgress = nil
-            renderStage = nil
+            mutateTape(tapeID) { $0.status = .done }
+            return true
+        } catch is CancellationError {
+            mutateTape(tapeID) { $0.status = .needsReview }
+            return false
+        } catch {
+            errorMessage = error.localizedDescription
+            mutateTape(tapeID) { $0.status = .needsReview }
+            return false
         }
     }
 

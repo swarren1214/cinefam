@@ -12,7 +12,8 @@ Design: *Home Video Restoration App — Mac Design* (Claude Design canvas).
 
 1. Install FFmpeg (free): `brew install ffmpeg`
 2. Open `CineFam.xcodeproj` in Xcode 26 and run (macOS 26, Apple silicon).
-3. Drag a digitized tape (MOV, AVI, DV, MP4…) into the window, or **File › Import Tapes…** (⇧⌘I).
+3. Drag digitized tapes (MOV, AVI, DV, MP4…) or a whole folder of them into the window, or
+   **File › Import Tapes or Folder…** (⇧⌘I). Folders are searched inside, sorted by name.
 4. CineFam makes a 360p preview copy and analyzes it: dead space, events, then for each
    event it reads the camcorder date stamp, transcribes speech for subtitles (asks for Speech
    Recognition permission) and suggests a title and summary with Apple Intelligence.
@@ -39,7 +40,7 @@ The library lives in `~/Library/Application Support/CineFam/` (`library.json` + 
 | 4 | Restore and export | ✅ first pass — Real-ESRGAN upscaling, cleanup, previews, export in 7 formats (needs a build in Xcode) |
 | 5 | Poster art | ✅ first pass — hero frames, color grades, 4 templates, poster + backdrop (needs a build in Xcode) |
 | 6 | Illustrated posters | ✅ first pass — 4 drawn styles + Image Playground (needs a build in Xcode) |
-| 7 | Library mode | ⬜ |
+| 7 | Library mode | ✅ first pass — folder import, unattended processing, people, search (needs a build in Xcode) |
 
 ## Layout
 
@@ -55,11 +56,12 @@ CineFam/
              EventEnricher (Phase 3 pipeline, date fill-in) · Restorer (Phase 4 restore +
              upscale, Real-ESRGAN install, previews) · HeroFramePicker (best stills) ·
              PosterArt (spec, grades, templates, rendering, taglines) · PosterStyles
-             (drawn styles, Image Playground)
+             (drawn styles, Image Playground) · FaceIndex (faces, prints, grouping) · Notifier
   Views/     ContentView · SidebarView · LibraryView · TapeReviewView (+ TapeTimeline)
              EventInspector · ExportSheet (+ SettingsView) · RestorationViews · PosterStudioView
+             QueueView · PeopleView
 prototype/   Python prototypes + tests: segmentation (1), date stamps (3), restoration (4),
-             hero frames (5)
+             hero frames (5), face grouping (7)
 ```
 
 The Xcode project uses a synchronized folder: any file added under `CineFam/` is built
@@ -97,6 +99,25 @@ movie info and the library show only what's known.
 Titles come from Apple's on-device Foundation Models (Apple Intelligence must be on) using
 the scene labels, face count, transcript, date and tape label. Without it, a simple
 keyword match names events ("Birthday – Jul 4, 1996"). Both can be turned off in Settings.
+
+## Library mode
+
+- **Processing** (sidebar) lists every tape with its stage and progress. Tapes are worked on
+  one at a time; *Do This One Next* reorders, *Pause After This Tape* and *Stop Now* (the
+  tape goes back in line) control the run. Your Mac is kept awake while it works.
+- **Unattended**: switch on *Export without waiting for review* and each tape is analyzed,
+  scanned for people, given posters and exported with the Export settings — a shoebox
+  overnight. A notification says when it's done. Off, tapes wait for review.
+- **People**: faces are found in 8 frames per event (Vision; at least 48 px and decent capture
+  quality), cropped and described with Vision feature prints, then grouped across the library
+  (port of `prototype/face_groups.py`: named people absorb close faces, the rest grouped
+  greedily, then near groups merged). Name a group once and that name is added to every movie
+  it's in; rename and it changes everywhere; *Not <name>…* removes a wrong face. The
+  *Grouping* slider trades more groups for fewer mistakes. Feature prints are general image
+  descriptors, not a face-recognition model, so expect to correct some groups — especially
+  across very different lighting or ages.
+- **Search** covers titles, summaries, keywords, people, tape labels and everything said;
+  results show where the words were spoken. Filter the library by person.
 
 ## Restoration
 
@@ -150,6 +171,7 @@ python3 test_datestamp.py                  # 23 camcorder date-stamp cases
 python3 test_restore.py --esrgan PATH/realesrgan-ncnn-vulkan [--quick]
                                            # restores a fake interlaced tape with Real-ESRGAN
 python3 test_hero_frames.py                # sharp frames beat blurry/dark/blown/smeared
+python3 test_face_groups.py                # 6 people + strangers grouped; names respected
 python3 restore.py TAPE.mov --start 42 --end 70 -o master.mov --esrgan PATH/realesrgan-ncnn-vulkan
 python3 cinefam_segment.py TAPE.mov -o result.json --export-clips clips/
 ```
@@ -159,11 +181,12 @@ against real tapes first, then copy them across.
 
 ## Next up
 
+All seven phases have a first pass. Next is getting it to build and run:
+
 - Build in Xcode and fix anything the compiler flags (this first pass was written without
   a Mac to compile on).
 - Run the prototype on 3 real tapes (VHS, MiniDV, mixed) and tune `classify()` thresholds.
 - `dvrescue` for exact MiniDV recording dates.
-- Faces → people names (label once, apply across the library).
 - Tune restoration defaults on real VHS (AI strength, denoise, edge trim).
 - Optional local Stable Diffusion img2img (Apple's ml-stable-diffusion, Core ML) for
   styles Image Playground doesn't offer — a 2–5 GB model download, so opt-in.

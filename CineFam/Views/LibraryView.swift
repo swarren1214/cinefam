@@ -7,14 +7,27 @@ struct LibraryView: View {
     @State private var search = ""
 
     private var filtered: [(tape: Tape, event: TapeEvent)] {
+        var items = model.allEvents
+        if let person = model.libraryPersonFilter { items = items.filter { $0.event.people.contains(person) } }
         let q = search.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return model.allEvents }
-        return model.allEvents.filter { item in
+        guard !q.isEmpty else { return items }
+        return items.filter { item in
             let e = item.event
-            let words = e.words.map(\.text).joined(separator: " ")
-            return [e.title, e.summary, e.people.joined(separator: " "), item.tape.label, words]
+            return [e.title, e.summary, e.people.joined(separator: " "), e.keywords.joined(separator: " "),
+                    item.tape.label, e.transcript]
                 .contains { $0.lowercased().contains(q) }
         }
+    }
+
+    /// "…back up, it's lit!" — where the search words were said, if they were.
+    private func spoken(_ e: TapeEvent) -> String? {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard q.count >= 3 else { return nil }
+        let text = e.transcript
+        guard let r = text.lowercased().range(of: q) else { return nil }
+        let lower = text.index(r.lowerBound, offsetBy: -30, limitedBy: text.startIndex) ?? text.startIndex
+        let upper = text.index(r.upperBound, offsetBy: 30, limitedBy: text.endIndex) ?? text.endIndex
+        return "…\(text[lower..<upper])…"
     }
 
     private var byYear: [(String, [(tape: Tape, event: TapeEvent)])] {
@@ -48,7 +61,13 @@ struct LibraryView: View {
                                         model.selectedEventID = item.event.id
                                         model.selection = .tape(item.tape.id)
                                     } label: {
-                                        PosterCard(event: item.event)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            PosterCard(event: item.event)
+                                            if let said = spoken(item.event) {
+                                                Text("“\(said)”").font(.caption).italic()
+                                                    .foregroundStyle(.secondary).lineLimit(2)
+                                            }
+                                        }
                                     }
                                     .buttonStyle(.plain)
                                 }
@@ -62,6 +81,20 @@ struct LibraryView: View {
         .navigationTitle("All Movies")
         .navigationSubtitle("\(model.allEvents.count) movies from \(model.tapes.count) tapes")
         .searchable(text: $search, prompt: "Titles, people, what was said")
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button("Everyone") { model.libraryPersonFilter = nil }
+                    Divider()
+                    ForEach(model.faceLibrary.names, id: \.self) { n in
+                        Button(n) { model.libraryPersonFilter = n }
+                    }
+                } label: {
+                    Label(model.libraryPersonFilter ?? "Everyone", systemImage: "person.crop.circle")
+                }
+                .disabled(model.faceLibrary.names.isEmpty)
+            }
+        }
     }
 }
 
