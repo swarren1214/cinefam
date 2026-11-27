@@ -18,7 +18,11 @@ Design: *Home Video Restoration App — Mac Design* (Claude Design canvas).
    Recognition permission) and suggests a title and summary with Apple Intelligence.
 5. When the tape says **Needs review**, pick events on the timeline, fix titles and dates,
    split or merge them. **Suggest Title & Date** re-runs the AI for one event.
-6. **Approve & Export…** → pick formats → Export. Files go to `~/Movies/Home Videos` by default.
+6. **Preview Restoration** (wand button) restores 10 seconds from the playhead and plays it
+   side by side with the original, so you can tune the settings first.
+7. **Approve & Export…** → pick formats and restoration settings → Export. The first time,
+   download Real-ESRGAN from the Restoration section (52 MB, checked against a known SHA-256).
+   Files go to `~/Movies/Home Videos` by default.
 
 The library lives in `~/Library/Application Support/CineFam/` (`library.json` + `Proxies/`).
 
@@ -29,7 +33,7 @@ The library lives in `~/Library/Application Support/CineFam/` (`library.json` + 
 | 1 | Prove segmentation | ✅ `prototype/` — passes its test tape |
 | 2 | App shell: import, queue, review timeline | ✅ first pass (needs a build in Xcode) |
 | 3 | Dating and naming | ✅ first pass — date-stamp OCR, scene tags, faces, transcripts, AI titles (needs a build in Xcode) |
-| 4 | Restore and export | 🟡 export in 7 formats with subtitles, chapters, metadata done; Real-ESRGAN upscale to do (uses lanczos scaling for now) |
+| 4 | Restore and export | ✅ first pass — Real-ESRGAN upscaling, cleanup, previews, export in 7 formats (needs a build in Xcode) |
 | 5 | Poster art | ⬜ |
 | 6 | Illustrated posters | ⬜ |
 | 7 | Library mode | ⬜ |
@@ -45,10 +49,11 @@ CineFam/
              Exporter (ffmpeg command per event/format) · Transcriber (on-device speech)
              DateStampParser (camcorder stamps) · FrameInsights (keyframes + Vision OCR,
              scene tags, faces) · EventNamer (Foundation Models + fallback) ·
-             EventEnricher (Phase 3 pipeline, date fill-in)
+             EventEnricher (Phase 3 pipeline, date fill-in) · Restorer (Phase 4 restore +
+             upscale, Real-ESRGAN install, previews)
   Views/     ContentView · SidebarView · LibraryView · TapeReviewView (+ TapeTimeline)
-             EventInspector · ExportSheet (+ SettingsView)
-prototype/   Python prototypes + tests: segmentation (Phase 1), date stamps (Phase 3)
+             EventInspector · ExportSheet (+ SettingsView) · RestorationViews
+prototype/   Python prototypes + tests: segmentation (1), date stamps (3), restoration (4)
 ```
 
 The Xcode project uses a synchronized folder: any file added under `CineFam/` is built
@@ -87,12 +92,34 @@ Titles come from Apple's on-device Foundation Models (Apple Intelligence must be
 the scene labels, face count, transcript, date and tape label. Without it, a simple
 keyword match names events ("Birthday – Jul 4, 1996"). Both can be turned off in Settings.
 
+## Restoration
+
+Each kept event is restored once into a **restored master** (HEVC 10-bit `.mov` in
+`~/Library/Application Support/CineFam/Restored/`). Every export format is then made from it,
+so exporting more formats later doesn't redo the slow part.
+
+1. **Prepass** (one continuous FFmpeg run so temporal filters never restart): deinterlace
+   (`bwdif`; 60 fps with *Smooth motion*), square pixels, trim tape-edge noise, denoise
+   (`hqdn3d`), optional stabilizing (`deshake`), auto color (`normalize`), and audio cleanup
+   (hum filter, `afftdn` noise reduction, `loudnorm`). Saved losslessly (FFV1 + FLAC).
+2. **Upscale in chunks of 240 frames**: PNGs → Real-ESRGAN → blended with a plain lanczos
+   scale by *AI strength* (default 60%, which keeps faces natural) → encoded. Finished chunks
+   are reused, so a stopped render picks up where it left off.
+3. **Join** the chunks and add the cleaned audio.
+
+Models: *Fast* is `realesr-animevideov3` (2×/3×/4×), *Detailed* is `realesrgan-x4plus` (4×,
+much slower). With *Standard* upscaling (or before Real-ESRGAN is installed) it's lanczos +
+`cas` sharpening. Settings › Restoration shows and clears the disk space restored copies use.
+
 ## Prototype
 
 ```
 cd prototype
 python3 test_segment.py                    # builds a fake tape and checks the results
 python3 test_datestamp.py                  # 23 camcorder date-stamp cases
+python3 test_restore.py --esrgan PATH/realesrgan-ncnn-vulkan [--quick]
+                                           # restores a fake interlaced tape with Real-ESRGAN
+python3 restore.py TAPE.mov --start 42 --end 70 -o master.mov --esrgan PATH/realesrgan-ncnn-vulkan
 python3 cinefam_segment.py TAPE.mov -o result.json --export-clips clips/
 ```
 
@@ -106,4 +133,5 @@ against real tapes first, then copy them across.
 - Run the prototype on 3 real tapes (VHS, MiniDV, mixed) and tune `classify()` thresholds.
 - `dvrescue` for exact MiniDV recording dates.
 - Faces → people names (label once, apply across the library).
-- Real-ESRGAN upscaling (Phase 4), then Poster Studio (Phase 5).
+- Tune restoration defaults on real VHS (AI strength, denoise, edge trim).
+- Poster Studio (Phase 5): hero frames, Photo style, templates, Plex `poster.jpg`.

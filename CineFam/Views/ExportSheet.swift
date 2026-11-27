@@ -40,6 +40,8 @@ struct ExportSheet: View {
                     }
                 }
 
+                RestorationSettingsSection()
+
                 Section("Subtitles") {
                     Toggle("Embed selectable subtitles", isOn: s.embedSubtitles)
                     Toggle("Also save an .srt file", isOn: s.sidecarSRT)
@@ -85,7 +87,7 @@ struct ExportSheet: View {
             }
             .padding(16)
         }
-        .frame(width: 560, height: 680)
+        .frame(width: 580, height: 760)
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             if case .success(let url) = result { model.exportSettings.destination = url }
         }
@@ -120,6 +122,7 @@ struct ExportSheet: View {
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    @State private var restoredBytes: Int64 = 0
 
     var body: some View {
         @Bindable var model = model
@@ -137,6 +140,16 @@ struct SettingsView: View {
                     Text("Not found — run `brew install ffmpeg`").foregroundStyle(.red)
                 }
             }
+            Section("Restoration") {
+                ESRGANStatusRow()
+                LabeledContent("Restored copies") {
+                    HStack {
+                        Text(ByteCountFormatter.string(fromByteCount: restoredBytes, countStyle: .file))
+                        Button("Delete") { Restorer.deleteAll(); restoredBytes = Restorer.diskUsage() }
+                            .disabled(restoredBytes == 0)
+                    }
+                }
+            }
             LabeledContent("Library") {
                 Button("Show in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([AppModel.supportFolder])
@@ -146,5 +159,6 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 480)
         .padding()
+        .onAppear { restoredBytes = Restorer.diskUsage() }
     }
 }

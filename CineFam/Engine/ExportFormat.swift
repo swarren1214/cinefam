@@ -144,6 +144,7 @@ struct ExportSettings: Codable, Hashable {
     var destination: URL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
         .appending(path: "Home Videos")
     var subtitleLanguage = "eng"
+    var restore = RestoreSettings()
 }
 
 /// File and folder names (plan: "Naming and folders").

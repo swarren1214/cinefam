@@ -14,7 +14,26 @@ final class AppModel {
     var tapes: [Tape] = []
     var selection: SidebarItem? = .allMovies
     var selectedEventID: UUID?
-    var exportSettings = ExportSettings()
+    var exportSettings: ExportSettings = {
+        if let data = UserDefaults.standard.data(forKey: "exportSettings"),
+           let s = try? JSONDecoder().decode(ExportSettings.self, from: data) { return s }
+        return ExportSettings()
+    }() {
+        didSet {
+            if let data = try? JSONEncoder().encode(exportSettings) {
+                UserDefaults.standard.set(data, forKey: "exportSettings")
+            }
+        }
+    }
+    /// "Restoring event 2 of 7…" while exporting.
+    var renderStage: String?
+    var esrganInstallProgress: Double?
+
+    // Restoration preview
+    var showRestorePreview = false
+    var previewURL: URL?
+    var previewProgress: Double?
+    private var previewTask: Task<Void, Never>?
 
     var showImporter = false
     var showExport = false
@@ -264,18 +283,33 @@ final class AppModel {
     func exportTape(_ tapeID: UUID) {
         guard let tape = self.tape(tapeID) else { return }
         let events = tape.events.filter { $0.status != .discarded }
-        let exporter = Exporter(settings: exportSettings)
+        let settings = exportSettings
+        let exporter = Exporter(settings: settings)
+        let restoring = settings.restore.enabled
+        let restorer = Restorer(settings: settings.restore, targetHeight: settings.resolution.height)
         mutateTape(tapeID) { $0.status = .rendering(progress: 0) }
         exportProgress = 0
         Task {
             do {
                 for (n, event) in events.enumerated() {
-                    _ = try await exporter.export(.init(event: event, tape: tape, posterURL: nil)) { p in
-                        Task { @MainActor [weak self] in
-                            let total = (Double(n) + p) / Double(max(events.count, 1))
-                            self?.exportProgress = total
-                            self?.mutateTape(tapeID) { $0.status = .rendering(progress: total) }
+                    // Restoring is the slow part: it gets most of each event's share of the bar.
+                    let restoreShare = restoring ? 0.85 : 0.0
+                    func report(_ p: Double) {
+                        let total = (Double(n) + p) / Double(max(events.count, 1))
+                        exportProgress = total
+                        mutateTape(tapeID) { $0.status = .rendering(progress: total) }
+                    }
+                    var master: URL?
+                    if restoring {
+                        renderStage = "Restoring \(n + 1) of \(events.count): \(event.title)"
+                        master = try await restorer.restore(event, in: tape) { p in
+                            Task { @MainActor in report(p * restoreShare) }
                         }
+                    }
+                    renderStage = "Saving \(n + 1) of \(events.count): \(event.title)"
+                    _ = try await exporter.export(.init(event: event, tape: tape, posterURL: nil,
+                                                        restoredURL: master)) { p in
+                        Task { @MainActor in report(restoreShare + p * (1 - restoreShare)) }
                     }
                     mutateTape(tapeID) { t in
                         if let i = t.events.firstIndex(where: { $0.id == event.id }) { t.events[i].status = .rendered }
@@ -287,6 +321,51 @@ final class AppModel {
                 mutateTape(tapeID) { $0.status = .needsReview }
             }
             exportProgress = nil
+            renderStage = nil
+        }
+    }
+
+    // MARK: Restoration
+
+    /// Renders a 10-second original | restored comparison starting at `time`.
+    func previewRestoration(tape tapeID: UUID, event eventID: UUID, at time: TimeInterval) {
+        guard let tape = self.tape(tapeID), let event = tape.events.first(where: { $0.id == eventID }) else { return }
+        previewTask?.cancel()
+        previewURL = nil
+        previewProgress = 0
+        showRestorePreview = true
+        let restorer = Restorer(settings: exportSettings.restore, targetHeight: exportSettings.resolution.height)
+        previewTask = Task {
+            do {
+                let url = try await restorer.preview(event, in: tape, at: time) { p in
+                    Task { @MainActor [weak self] in self?.previewProgress = p }
+                }
+                previewURL = url
+            } catch is CancellationError {
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            previewProgress = nil
+        }
+    }
+
+    func cancelPreview() {
+        previewTask?.cancel()
+        previewProgress = nil
+    }
+
+    func installRealESRGAN() {
+        guard esrganInstallProgress == nil else { return }
+        esrganInstallProgress = 0
+        Task {
+            do {
+                try await RealESRGAN.install { p in
+                    Task { @MainActor [weak self] in self?.esrganInstallProgress = p }
+                }
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            esrganInstallProgress = nil
         }
     }
 }

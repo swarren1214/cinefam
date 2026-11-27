@@ -30,6 +30,11 @@ struct TapeReviewView: View {
             .onChange(of: tape.proxyURL) { if let t = self.tape { load(t) } }
             .onChange(of: tapeID) { if let t = self.tape { load(t) } }
             .onDisappear { stopObserving() }
+            .sheet(isPresented: $model.showRestorePreview) {
+                if let id = model.selectedEventID ?? tape.events.first?.id {
+                    RestorePreviewSheet(tapeID: tape.id, eventID: id, time: currentTime)
+                }
+            }
         }
     }
 
@@ -103,6 +108,15 @@ struct TapeReviewView: View {
         }
         ToolbarSpacer(.fixed)
         ToolbarItem {
+            Button("Preview Restoration", systemImage: "wand.and.sparkles") {
+                if let id = model.selectedEventID ?? tape.events.first?.id {
+                    model.previewRestoration(tape: tape.id, event: id, at: currentTime)
+                }
+            }
+            .disabled(tape.events.isEmpty || tape.status.isBusy)
+            .help("Restore 10 seconds from the playhead and compare it with the original")
+        }
+        ToolbarItem {
             Button("Approve & Export…", systemImage: "square.and.arrow.up") {
                 model.selection = .tape(tape.id)
                 model.showExport = true
@@ -120,7 +134,9 @@ struct TapeReviewView: View {
         if let info = tape.info { parts.append(info.duration.clock) }
         parts.append("\(tape.events.count) events")
         if tape.deadDuration > 0 { parts.append("\(tape.deadDuration.friendlyLength) dead space") }
-        if case .rendering(let p) = tape.status { parts.append("Exporting \(Int(p * 100))%") }
+        if case .rendering(let p) = tape.status {
+            parts.append("\(model.renderStage ?? "Exporting") · \(Int(p * 100))%")
+        }
         return parts.joined(separator: " · ")
     }
 

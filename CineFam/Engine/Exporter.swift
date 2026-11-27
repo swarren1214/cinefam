@@ -8,6 +8,8 @@ struct Exporter {
         var event: TapeEvent
         var tape: Tape
         var posterURL: URL?
+        /// Restored master from `Restorer` (already deinterlaced, cleaned and sized).
+        var restoredURL: URL?
     }
 
     /// Exports one event in every chosen format. Returns the files written.
@@ -104,9 +106,13 @@ struct Exporter {
         let useChapters = chapters != nil && format.supportsChapters
         let cover = settings.metadataAndArt && format.supportsCoverArt ? job.posterURL : nil
 
-        var a = ["-hide_banner", "-y", "-nostats", "-progress", "pipe:1",
-                 "-ss", String(format: "%.3f", e.start), "-to", String(format: "%.3f", e.end),
-                 "-i", job.tape.sourceURL.path]
+        var a = ["-hide_banner", "-y", "-nostats", "-progress", "pipe:1"]
+        if let master = job.restoredURL {
+            a += ["-i", master.path]
+        } else {
+            a += ["-ss", String(format: "%.3f", e.start), "-to", String(format: "%.3f", e.end),
+                  "-i", job.tape.sourceURL.path]
+        }
         var next = 1
         var subIndex: Int?, chapIndex: Int?, coverIndex: Int?
         if softSubs, let srt { a += ["-i", srt.path]; subIndex = next; next += 1 }
@@ -118,17 +124,19 @@ struct Exporter {
         if let coverIndex { a += ["-map", "\(coverIndex):0"] }
         a += ["-map_chapters", chapIndex.map { String($0) } ?? "-1", "-map_metadata:g", "-1"]
 
-        // Restoration filters. Real-ESRGAN / VideoToolbox super-resolution replaces the
-        // plain lanczos scale in Phase 4.
+        // A restored master is already clean and sized; otherwise do a quick cleanup here.
         var filters: [String] = []
-        if info?.isInterlaced ?? true { filters.append("bwdif=mode=send_field") }
-        filters.append("hqdn3d=2:1.5:3:3")
-        if let h = settings.resolution.height { filters.append("scale=-2:\(h):flags=lanczos") }
+        if job.restoredURL == nil {
+            if info?.isInterlaced ?? true { filters.append("bwdif=mode=send_frame") }
+            filters.append("scale=trunc(iw*sar/2)*2:ih,setsar=1,hqdn3d=2:3:3:4.5")
+            if let h = settings.resolution.height { filters.append("scale=-2:\(h):flags=lanczos") }
+        }
         if burnIn, let srt { filters.append("subtitles=filename='\(Self.filterEscape(srt.path))'") }
         filters.append("setsar=1")
         a += ["-filter:v:0", filters.joined(separator: ",")]
 
         a += format.codecArgs(quality: settings.quality)
+        a += ["-ar", "48000"]   // every format here supports 48 kHz; some (WMA) reject more
         if subIndex != nil {
             a += ["-c:s", format.subtitleCodec, "-metadata:s:s:0", "language=\(settings.subtitleLanguage)",
                   "-metadata:s:s:0", "title=English"]
