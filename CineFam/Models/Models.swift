@@ -155,6 +155,13 @@ struct TapeEvent: Identifiable, Codable, Hashable {
     var faceCount: Int?
     var aiNamed: Bool?
 
+    // Phase 5.
+    var poster: PosterSpec?
+    var posterImageURL: URL? {
+        guard let url = poster?.posterURL, FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
     var duration: TimeInterval { end - start }
     var year: Int? { date.map { Calendar.current.component(.year, from: $0) } }
     var precision: DatePrecision { datePrecision ?? .exact }

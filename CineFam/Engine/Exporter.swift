@@ -10,6 +10,8 @@ struct Exporter {
         var posterURL: URL?
         /// Restored master from `Restorer` (already deinterlaced, cleaned and sized).
         var restoredURL: URL?
+        /// 16:9 backdrop from Poster Studio.
+        var fanartURL: URL?
     }
 
     /// Exports one event in every chosen format. Returns the files written.
@@ -68,12 +70,17 @@ struct Exporter {
         if let srtURL { try? fm.removeItem(at: srtURL) }
         if let chaptersURL { try? fm.removeItem(at: chaptersURL) }
 
-        // Poster files for Plex / Infuse.
-        if settings.metadataAndArt, let poster = job.posterURL, settings.layout == .movieFolders {
-            let dest = folder.appending(path: "poster.jpg")
-            try? fm.removeItem(at: dest)
-            try fm.copyItem(at: poster, to: dest)
-            written.append(dest)
+        // Poster and backdrop for Plex / Infuse / Jellyfin: poster.jpg + fanart.jpg in a movie
+        // folder, or "<name>.jpg" + "<name>-fanart.jpg" beside the movie when sharing a folder.
+        if settings.metadataAndArt {
+            let names = settings.layout == .movieFolders ? ("poster.jpg", "fanart.jpg") : ("\(base).jpg", "\(base)-fanart.jpg")
+            for (source, name) in [(job.posterURL, names.0), (job.fanartURL, names.1)] {
+                guard let source, fm.fileExists(atPath: source.path) else { continue }
+                let dest = folder.appending(path: name)
+                try? fm.removeItem(at: dest)
+                try fm.copyItem(at: source, to: dest)
+                written.append(dest)
+            }
         }
 
         // Sidecar JSON with everything we know about the event.

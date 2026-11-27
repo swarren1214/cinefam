@@ -4,6 +4,7 @@ import SwiftUI
 
 enum SidebarItem: Hashable {
     case allMovies
+    case posterStudio
     case tape(UUID)
 }
 
@@ -34,6 +35,11 @@ final class AppModel {
     var previewURL: URL?
     var previewProgress: Double?
     private var previewTask: Task<Void, Never>?
+
+    // Poster Studio
+    var heroCandidates: [UUID: [HeroCandidate]] = [:]
+    var loadingHeroes: Set<UUID> = []
+    var posterBatchProgress: Double?
 
     var showImporter = false
     var showExport = false
@@ -307,8 +313,13 @@ final class AppModel {
                         }
                     }
                     renderStage = "Saving \(n + 1) of \(events.count): \(event.title)"
-                    _ = try await exporter.export(.init(event: event, tape: tape, posterURL: nil,
-                                                        restoredURL: master)) { p in
+                    var current = self.tape(tapeID)?.events.first { $0.id == event.id } ?? event
+                    if current.posterEnabled && current.posterImageURL == nil && settings.metadataAndArt {
+                        await makeDefaultPoster(tape: tapeID, event: event.id)
+                        current = self.tape(tapeID)?.events.first { $0.id == event.id } ?? current
+                    }
+                    _ = try await exporter.export(.init(event: current, tape: tape, posterURL: current.posterImageURL,
+                                                        restoredURL: master, fanartURL: current.poster?.fanartURL)) { p in
                         Task { @MainActor in report(restoreShare + p * (1 - restoreShare)) }
                     }
                     mutateTape(tapeID) { t in
@@ -352,6 +363,88 @@ final class AppModel {
     func cancelPreview() {
         previewTask?.cancel()
         previewProgress = nil
+    }
+
+    // MARK: Posters
+
+    func restoredMaster(for event: TapeEvent) -> URL? {
+        let url = Restorer(settings: exportSettings.restore, targetHeight: exportSettings.resolution.height)
+            .masterURL(for: event)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Ranks stills for an event (cached until asked again).
+    func loadHeroes(tape tapeID: UUID, event eventID: UUID, force: Bool = false) async {
+        guard force || heroCandidates[eventID] == nil, !loadingHeroes.contains(eventID),
+              let tape = self.tape(tapeID), let event = tape.events.first(where: { $0.id == eventID }) else { return }
+        loadingHeroes.insert(eventID)
+        defer { loadingHeroes.remove(eventID) }
+        do {
+            heroCandidates[eventID] = try await HeroFramePicker().candidates(
+                for: event, in: tape, restoredMaster: restoredMaster(for: event)) { _ in }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func addHeroFrame(tape tapeID: UUID, event eventID: UUID, at time: TimeInterval) async -> HeroCandidate? {
+        guard let tape = self.tape(tapeID), let event = tape.events.first(where: { $0.id == eventID }) else { return nil }
+        do {
+            let c = try await HeroFramePicker().frame(at: time, for: event, in: tape, restoredMaster: restoredMaster(for: event))
+            heroCandidates[eventID, default: []].insert(c, at: 0)
+            return c
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// A starting poster: best still, warm grade, classic layout, AI tagline.
+    func defaultSpec(tape tapeID: UUID, event eventID: UUID) async -> PosterSpec? {
+        guard let tape = self.tape(tapeID), let event = tape.events.first(where: { $0.id == eventID }) else { return nil }
+        if let existing = event.poster { return existing }
+        await loadHeroes(tape: tapeID, event: eventID)
+        guard let hero = heroCandidates[eventID]?.first else { return nil }
+        return PosterSpec(heroTime: hero.time, heroImage: hero.imageURL, focusX: hero.focusX, focusY: hero.focusY,
+                          title: PosterCopy.title(for: event), tagline: await PosterCopy.tagline(for: event),
+                          billing: PosterCopy.billing(for: event, tape: tape), dateLine: PosterCopy.dateLine(for: event))
+    }
+
+    func savePoster(_ spec: PosterSpec, tape tapeID: UUID, event eventID: UUID) {
+        guard let event = tape(tapeID)?.events.first(where: { $0.id == eventID }) else { return }
+        do {
+            let rendered = try PosterRenderer.render(spec, for: event)
+            mutateTape(tapeID) { t in
+                if let i = t.events.firstIndex(where: { $0.id == eventID }) {
+                    t.events[i].poster = rendered
+                    t.events[i].posterEnabled = true
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func makeDefaultPoster(tape tapeID: UUID, event eventID: UUID) async {
+        guard let spec = await defaultSpec(tape: tapeID, event: eventID) else { return }
+        savePoster(spec, tape: tapeID, event: eventID)
+    }
+
+    var eventsMissingPosters: [(tape: Tape, event: TapeEvent)] {
+        allEvents.filter { $0.event.posterImageURL == nil }
+    }
+
+    func generateMissingPosters() {
+        let todo = eventsMissingPosters
+        guard !todo.isEmpty, posterBatchProgress == nil else { return }
+        posterBatchProgress = 0
+        Task {
+            for (n, item) in todo.enumerated() {
+                await makeDefaultPoster(tape: item.tape.id, event: item.event.id)
+                posterBatchProgress = Double(n + 1) / Double(todo.count)
+            }
+            posterBatchProgress = nil
+        }
     }
 
     func installRealESRGAN() {

@@ -21,6 +21,8 @@ struct ContentView: View {
                     switch model.selection {
                     case .tape(let id)? where model.tape(id) != nil:
                         TapeReviewView(tapeID: id)
+                    case .posterStudio?:
+                        PosterStudioView()
                     default:
                         LibraryView()
                     }

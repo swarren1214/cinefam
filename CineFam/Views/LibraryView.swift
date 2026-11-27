@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Every kept event across all tapes, as a poster wall grouped by year.
@@ -69,17 +70,25 @@ struct PosterCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(LinearGradient(colors: Self.palette(for: event.title),
-                                     startPoint: .top, endPoint: .bottom))
-                .aspectRatio(2 / 3, contentMode: .fit)
-                .overlay(alignment: .bottomLeading) {
-                    Text(event.title)
-                        .font(.system(size: 20, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .lineLimit(3)
-                        .padding(10)
+            Group {
+                if let url = event.posterImageURL, let image = NSImage(contentsOf: url) {
+                    Image(nsImage: image).resizable().aspectRatio(2 / 3, contentMode: .fit)
+                        .clipShape(.rect(cornerRadius: 10))
+                        .id(event.poster?.renderedAt)
+                } else {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(LinearGradient(colors: Self.palette(for: event.title),
+                                             startPoint: .top, endPoint: .bottom))
+                        .aspectRatio(2 / 3, contentMode: .fit)
+                        .overlay(alignment: .bottomLeading) {
+                            Text(event.title)
+                                .font(.system(size: 20, weight: .heavy))
+                                .foregroundStyle(.white)
+                                .lineLimit(3)
+                                .padding(10)
+                        }
                 }
+            }
                 .overlay(alignment: .topTrailing) {
                     if event.status == .rendered {
                         Image(systemName: "checkmark.circle.fill")
@@ -94,7 +103,7 @@ struct PosterCard: View {
         }
     }
 
-    /// Stand-in art until Poster Studio (Phase 5) makes real posters.
+    /// Stand-in art for events without a poster yet.
     static func palette(for title: String) -> [Color] {
         let sets: [[Color]] = [
             [.indigo, .orange], [.teal, .blue], [.orange, .brown], [.purple, .pink], [.blue, .black],

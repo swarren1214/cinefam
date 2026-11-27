@@ -11,6 +11,9 @@ struct SidebarView: View {
                 Label("All Movies", systemImage: "film.stack")
                     .badge(model.allEvents.count)
                     .tag(SidebarItem.allMovies)
+                Label("Poster Studio", systemImage: "rectangle.portrait.on.rectangle.portrait")
+                    .badge(model.eventsMissingPosters.count)
+                    .tag(SidebarItem.posterStudio)
             }
             Section("Tapes") {
                 ForEach(model.tapes) { tape in

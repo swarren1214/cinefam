@@ -20,7 +20,10 @@ Design: *Home Video Restoration App — Mac Design* (Claude Design canvas).
    split or merge them. **Suggest Title & Date** re-runs the AI for one event.
 6. **Preview Restoration** (wand button) restores 10 seconds from the playhead and plays it
    side by side with the original, so you can tune the settings first.
-7. **Approve & Export…** → pick formats and restoration settings → Export. The first time,
+7. **Poster Studio** (sidebar) designs a movie poster for each event: pick one of the best
+   stills, a color grade and a layout, edit the words, **Save Poster**. **Generate Missing**
+   makes one for every event with the defaults.
+8. **Approve & Export…** → pick formats and restoration settings → Export. The first time,
    download Real-ESRGAN from the Restoration section (52 MB, checked against a known SHA-256).
    Files go to `~/Movies/Home Videos` by default.
 
@@ -34,7 +37,7 @@ The library lives in `~/Library/Application Support/CineFam/` (`library.json` + 
 | 2 | App shell: import, queue, review timeline | ✅ first pass (needs a build in Xcode) |
 | 3 | Dating and naming | ✅ first pass — date-stamp OCR, scene tags, faces, transcripts, AI titles (needs a build in Xcode) |
 | 4 | Restore and export | ✅ first pass — Real-ESRGAN upscaling, cleanup, previews, export in 7 formats (needs a build in Xcode) |
-| 5 | Poster art | ⬜ |
+| 5 | Poster art | ✅ first pass — hero frames, color grades, 4 templates, poster + backdrop (needs a build in Xcode) |
 | 6 | Illustrated posters | ⬜ |
 | 7 | Library mode | ⬜ |
 
@@ -50,10 +53,12 @@ CineFam/
              DateStampParser (camcorder stamps) · FrameInsights (keyframes + Vision OCR,
              scene tags, faces) · EventNamer (Foundation Models + fallback) ·
              EventEnricher (Phase 3 pipeline, date fill-in) · Restorer (Phase 4 restore +
-             upscale, Real-ESRGAN install, previews)
+             upscale, Real-ESRGAN install, previews) · HeroFramePicker (best stills) ·
+             PosterArt (spec, grades, templates, rendering, taglines)
   Views/     ContentView · SidebarView · LibraryView · TapeReviewView (+ TapeTimeline)
-             EventInspector · ExportSheet (+ SettingsView) · RestorationViews
-prototype/   Python prototypes + tests: segmentation (1), date stamps (3), restoration (4)
+             EventInspector · ExportSheet (+ SettingsView) · RestorationViews · PosterStudioView
+prototype/   Python prototypes + tests: segmentation (1), date stamps (3), restoration (4),
+             hero frames (5)
 ```
 
 The Xcode project uses a synchronized folder: any file added under `CineFam/` is built
@@ -111,6 +116,23 @@ Models: *Fast* is `realesr-animevideov3` (2×/3×/4×), *Detailed* is `realesrga
 much slower). With *Standard* upscaling (or before Real-ESRGAN is installed) it's lanczos +
 `cas` sharpening. Settings › Restoration shows and clears the disk space restored copies use.
 
+## Posters
+
+1. **Hero frames**: 40 stills across the event (from the restored master if there is one),
+   skipping moments next to cuts. Each is scored on sharpness (variance of the Laplacian),
+   exposure, contrast and colorfulness — scaled against the event's best frame — plus Apple
+   Vision's face-capture quality and aesthetics score; "utility" shots are marked down. The
+   top 6, at least 2 s apart, are offered. Vision also finds the subject (biggest face, else
+   the salient area) so crops keep it in frame.
+2. **Look**: Core Image grades — Natural, Warm ’80s, Faded Film, Teal & Orange, Black & White.
+3. **Templates** (SwiftUI, rendered with `ImageRenderer`): Classic One-Sheet, Minimal,
+   VHS Box, Title Card. Title, tagline (Apple Intelligence, with a fallback), top line, date
+   and credits ("Starring …" from the event's people) are all editable.
+4. **Files**: `poster.jpg` 1000×1500 and `fanart.jpg` 1920×1080 (no text). Exports embed the
+   poster as cover art (M4V/MP4) and copy both beside the movie: `poster.jpg`/`fanart.jpg` in
+   movie folders, `<name>.jpg`/`<name>-fanart.jpg` with date-first naming. An event with
+   **Poster** switched on gets a default poster at export if it doesn't have one.
+
 ## Prototype
 
 ```
@@ -119,6 +141,7 @@ python3 test_segment.py                    # builds a fake tape and checks the r
 python3 test_datestamp.py                  # 23 camcorder date-stamp cases
 python3 test_restore.py --esrgan PATH/realesrgan-ncnn-vulkan [--quick]
                                            # restores a fake interlaced tape with Real-ESRGAN
+python3 test_hero_frames.py                # sharp frames beat blurry/dark/blown/smeared
 python3 restore.py TAPE.mov --start 42 --end 70 -o master.mov --esrgan PATH/realesrgan-ncnn-vulkan
 python3 cinefam_segment.py TAPE.mov -o result.json --export-clips clips/
 ```
@@ -134,4 +157,5 @@ against real tapes first, then copy them across.
 - `dvrescue` for exact MiniDV recording dates.
 - Faces → people names (label once, apply across the library).
 - Tune restoration defaults on real VHS (AI strength, denoise, edge trim).
-- Poster Studio (Phase 5): hero frames, Photo style, templates, Plex `poster.jpg`.
+- Illustrated poster styles (Phase 6): Stable Diffusion / FLUX img2img, Image Playground.
+- Face restoration for poster stills (GFPGAN, Apache 2.0).
