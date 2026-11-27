@@ -35,7 +35,10 @@ struct RestoreSettings: Codable, Hashable {
 
     /// Same settings + same event range → same master, so it can be reused.
     func fingerprint(event: TapeEvent, height: Int?) -> String {
-        let key = "\(self)|\(event.start)|\(event.end)|\(height ?? 0)|v1"
+        // Include whether the AI upscaler could actually run: a copy made with the plain
+        // fallback must not be reused once Real-ESRGAN is installed.
+        let ai = upscaler == .ai && RealESRGAN.isInstalled
+        let key = "\(self)|\(event.start)|\(event.end)|\(height ?? 0)|ai:\(ai)|v2"
         return SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 }

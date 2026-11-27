@@ -10,6 +10,17 @@ struct TapeReviewView: View {
     @State private var currentTime: TimeInterval = 0
     @State private var timeObserver: Any?
 
+    /// What the player shows: the original tape (full quality when macOS can play it, else the
+    /// 360p working copy) or the restored version of the selected event.
+    enum ViewSource: String, CaseIterable, Identifiable {
+        case original = "Original", restored = "Restored"
+        var id: Self { self }
+    }
+    @State private var source: ViewSource = .original
+    /// Tape time of the player's 0:00 (an event's start when playing its restored copy).
+    @State private var offset: TimeInterval = 0
+    @State private var originalPlayable: Bool?
+
     private var tape: Tape? { model.tape(tapeID) }
 
     /// Troubleshooting switch: hide parts of this screen without rebuilding, e.g.
@@ -41,7 +52,15 @@ struct TapeReviewView: View {
             .toolbar { if !debugHide.contains("toolbar") { toolbar(tape) } }
             .onAppear { load(tape) }
             .onChange(of: tape.proxyURL) { if let t = self.tape { load(t) } }
-            .onChange(of: tapeID) { if let t = self.tape { load(t) } }
+            .onChange(of: tapeID) { originalPlayable = nil; if let t = self.tape { load(t) } }
+            .onChange(of: source) { if let t = self.tape { reloadPlayer(t, at: currentTime) } }
+            .onChange(of: model.selectedEventID) {
+                // A restored copy is per event: picking another event loads its copy.
+                if source == .restored, let t = self.tape,
+                   let e = t.events.first(where: { $0.id == model.selectedEventID }) {
+                    reloadPlayer(t, at: e.start)
+                }
+            }
             .onDisappear { stopObserving() }
             .sheet(isPresented: $model.showRestorePreview) {
                 if let id = model.selectedEventID ?? tape.events.first?.id {
@@ -93,6 +112,34 @@ struct TapeReviewView: View {
             } else {
                 VideoPlayer(player: player)
                     .clipShape(.rect(cornerRadius: 16))
+                    .overlay {
+                        if source == .restored, restoredMaster(tape) == nil {
+                            ZStack {
+                                Color.black.opacity(0.8)
+                                VStack(spacing: 10) {
+                                    Text("No restored copy of this event yet").font(.headline)
+                                    Text("Preview Restoration restores 10 seconds to compare. Exporting restores the whole event, and you can watch it here afterwards.")
+                                        .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                                        .frame(maxWidth: 380)
+                                    Button("Preview Restoration") {
+                                        if let id = model.selectedEventID {
+                                            model.previewRestoration(tape: tape.id, event: id, at: currentTime)
+                                        }
+                                    }
+                                }
+                                .foregroundStyle(.white)
+                            }
+                            .clipShape(.rect(cornerRadius: 16))
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        Text(sourceLabel(tape))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(.black.opacity(0.55), in: .capsule)
+                            .padding(12)
+                    }
                     .overlay(alignment: .topLeading) {
                         if let e = event(at: currentTime, in: tape) {
                             // No glass here: glass samples what's behind it, which is
@@ -135,6 +182,14 @@ struct TapeReviewView: View {
 
     @ToolbarContentBuilder
     private func toolbar(_ tape: Tape) -> some ToolbarContent {
+        ToolbarItem {
+            Picker("View", selection: $source) {
+                ForEach(ViewSource.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .help("Watch the original tape, or the restored version of the selected event")
+            .disabled(tape.events.isEmpty)
+        }
         ToolbarItemGroup {
             Button("Previous Event", systemImage: "chevron.backward") { step(-1, in: tape) }
             Button("Next Event", systemImage: "chevron.forward") { step(1, in: tape) }
@@ -176,17 +231,56 @@ struct TapeReviewView: View {
     // MARK: Playback
 
     private func load(_ tape: Tape) {
-        stopObserving()
-        guard let url = tape.proxyURL ?? (tape.info != nil ? tape.sourceURL : nil) else { return }
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
-                                                      queue: .main) { time in
-            currentTime = time.seconds
-        }
         if model.selectedEventID == nil || !tape.events.contains(where: { $0.id == model.selectedEventID }) {
             model.selectedEventID = tape.events.first?.id
         }
-        if let e = tape.events.first(where: { $0.id == model.selectedEventID }) { seek(to: e.start) }
+        let start = tape.events.first(where: { $0.id == model.selectedEventID })?.start ?? 0
+        Task {
+            if originalPlayable == nil {
+                // AVFoundation plays MOV/MP4/DV; AVI, MKV and some captures need the working copy.
+                originalPlayable = (try? await AVURLAsset(url: tape.sourceURL).load(.isPlayable)) ?? false
+            }
+            reloadPlayer(tape, at: start)
+        }
+    }
+
+    private func restoredMaster(_ tape: Tape) -> URL? {
+        guard let e = tape.events.first(where: { $0.id == model.selectedEventID }) else { return nil }
+        return model.restoredMaster(for: e)
+    }
+
+    private func sourceLabel(_ tape: Tape) -> String {
+        if source == .restored, restoredMaster(tape) != nil {
+            let h = model.exportSettings.resolution.height.map { "\($0)p" } ?? "original size"
+            return "Restored · \(h)"
+        }
+        if originalPlayable == true, let info = tape.info { return "Original · \(info.height)p" }
+        return "Working copy · 360p"
+    }
+
+    private func reloadPlayer(_ tape: Tape, at time: TimeInterval) {
+        stopObserving()
+        var url: URL?
+        var newOffset: TimeInterval = 0
+        if source == .restored, let e = tape.events.first(where: { $0.id == model.selectedEventID }),
+           let master = model.restoredMaster(for: e) {
+            url = master
+            newOffset = e.start
+        } else if originalPlayable == true {
+            url = tape.sourceURL
+        } else {
+            url = tape.proxyURL ?? (tape.info != nil ? tape.sourceURL : nil)
+        }
+        guard let url else { return }
+        if (player.currentItem?.asset as? AVURLAsset)?.url != url {
+            player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        }
+        offset = newOffset
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+                                                      queue: .main) { t in
+            currentTime = t.seconds + newOffset
+        }
+        seek(to: time)
     }
 
     private func stopObserving() {
@@ -195,7 +289,8 @@ struct TapeReviewView: View {
     }
 
     private func seek(to time: TimeInterval) {
-        player.seek(to: CMTime(seconds: time, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        player.seek(to: CMTime(seconds: max(0, time - offset), preferredTimescale: 600),
+                    toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = time
     }
 

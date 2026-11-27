@@ -525,6 +525,10 @@ final class AppModel {
         let exporter = Exporter(settings: settings)
         let restoring = settings.restore.enabled
         let restorer = Restorer(settings: settings.restore, targetHeight: settings.resolution.height)
+        if restoring && !RealESRGAN.isInstalled && settings.restore.upscaler == .ai {
+            renderStage = "Downloading Real-ESRGAN (\(RealESRGAN.downloadSize))…"
+            await ensureRealESRGAN()
+        }
         mutateTape(tapeID) { $0.status = .rendering(progress: 0) }
         exportProgress = 0
         defer { exportProgress = nil; renderStage = nil }
@@ -581,6 +585,7 @@ final class AppModel {
         showRestorePreview = true
         let restorer = Restorer(settings: exportSettings.restore, targetHeight: exportSettings.resolution.height)
         previewTask = Task {
+            await ensureRealESRGAN()
             do {
                 let url = try await restorer.preview(event, in: tape, at: time) { p in
                     Task { @MainActor [weak self] in self?.previewProgress = p }
@@ -728,6 +733,22 @@ final class AppModel {
     func checkFFmpeg() {
         ffmpegReady = FFmpeg.isInstalled
         if ffmpegReady { runQueue() }
+    }
+
+    /// AI upscaling chosen but Real-ESRGAN missing: install it now rather than quietly
+    /// falling back to plain upscaling (which barely changes the picture).
+    func ensureRealESRGAN() async {
+        let r = exportSettings.restore
+        guard r.enabled, r.upscaler == .ai, !RealESRGAN.isInstalled, esrganInstallProgress == nil else { return }
+        esrganInstallProgress = 0
+        defer { esrganInstallProgress = nil }
+        do {
+            try await RealESRGAN.install { p in
+                Task { @MainActor [weak self] in self?.esrganInstallProgress = p }
+            }
+        } catch {
+            report(error)
+        }
     }
 
     func installRealESRGAN() {
