@@ -80,7 +80,7 @@ def prepass_video_filter(interlaced, smooth_motion, clean_edges, denoise, stabil
     return ",".join(f)
 
 
-AUDIO_CLEANUP = "highpass=f=70,afftdn=nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000"  # loudnorm outputs 192 kHz
+AUDIO_CLEANUP = "highpass=f=70,afftdn=nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=s32:sample_rates=48000:channel_layouts=stereo"  # loudnorm outputs 192 kHz
 
 
 def upscale_blend_filter(w, h, strength):

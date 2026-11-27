@@ -170,6 +170,10 @@ struct Restorer {
     }
 
     static let audioCleanup = "highpass=f=70,afftdn=nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000"  // loudnorm outputs 192 kHz
+    /// Ends every master's audio chain: a fixed 48 kHz stereo format the FLAC encoder always
+    /// accepts. Without it, sources whose AAC changes its channel-layout description mid-file
+    /// failed with "Cannot select channel layout" when FFmpeg rebuilt the filters.
+    static let masterAudioFormat = "aresample=48000,aformat=sample_fmts=s32:sample_rates=48000:channel_layouts=stereo"
 
     static func blendFilter(width w: Int, height h: Int, strength: Double) -> String {
         let k = String(format: "%.2f", strength)
@@ -203,11 +207,15 @@ struct Restorer {
             let part = work.appending(path: "prepass.part.mkv")
             var a = ["-hide_banner", "-y", "-nostats", "-progress", "pipe:1",
                      "-ss", String(format: "%.3f", start), "-to", String(format: "%.3f", end),
+                     // Keep the filters built once: rebuilding them mid-file on a stream
+                     // description change is what broke audio on some camera MP4s.
+                     "-reinit_filter", "0",
                      "-i", tape.sourceURL.path, "-map", "0:v:0",
                      "-vf", Self.prepassFilter(settings, interlaced: interlaced),
                      "-c:v", "ffv1", "-level", "3", "-pix_fmt", "yuv420p"]
             if tape.info?.hasAudio ?? false {
-                a += ["-map", "0:a:0"] + (settings.cleanAudio ? ["-af", Self.audioCleanup] : []) + ["-c:a", "flac"]
+                let af = settings.cleanAudio ? Self.audioCleanup + "," + Self.masterAudioFormat : Self.masterAudioFormat
+                a += ["-map", "0:a:0", "-af", af, "-c:a", "flac"]
             }
             let parser = ProgressParser(duration: end - start)
             try await FFmpeg.run("ffmpeg", a + [part.path]) { line in
