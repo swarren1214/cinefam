@@ -595,8 +595,8 @@ final class AppModel {
         previewTask = Task {
             await ensureRealESRGAN()
             do {
-                let url = try await restorer.preview(event, in: tape, at: time) { [weak self] p in
-                    Task { @MainActor in self?.previewProgress = p }
+                let url = try await restorer.preview(event, in: tape, at: time) { p in
+                    Task { @MainActor in self.previewProgress = p }
                 }
                 previewURL = url
             } catch is CancellationError {
@@ -726,8 +726,8 @@ final class AppModel {
         ffmpegInstallProgress = 0
         Task {
             do {
-                try await FFmpegInstaller.install { [weak self] p in
-                    Task { @MainActor in self?.ffmpegInstallProgress = p }
+                try await FFmpegInstaller.install { p in
+                    Task { @MainActor in self.ffmpegInstallProgress = p }
                 }
             } catch {
                 report(error)
@@ -764,8 +764,8 @@ final class AppModel {
         esrganInstallProgress = 0
         Task {
             do {
-                try await RealESRGAN.install { [weak self] p in
-                    Task { @MainActor in self?.esrganInstallProgress = p }
+                try await RealESRGAN.install { p in
+                    Task { @MainActor in self.esrganInstallProgress = p }
                 }
             } catch {
                 report(error)
