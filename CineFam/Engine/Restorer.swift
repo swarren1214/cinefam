@@ -103,29 +103,62 @@ enum RealESRGAN {
         progress(1)
     }
 
-    static func run(input: URL, output: URL, model: RestoreSettings.AIModel, scale: Int) async throws {
+    /// Upscales every PNG in `input` into `output`. `progress` gets the share of `expected`
+    /// frames finished so far, checked by counting output files.
+    static func run(input: URL, output: URL, model: RestoreSettings.AIModel, scale: Int,
+                    expected: Int, progress: (@Sendable (Double) -> Void)? = nil) async throws {
         let p = Process()
         p.executableURL = executable
         p.currentDirectoryURL = folder
         p.arguments = ["-i", input.path, "-o", output.path, "-n", model.file, "-s", String(scale),
                        "-m", modelsFolder.path, "-f", "png"]
+        p.standardInput = FileHandle.nullDevice
         p.standardOutput = FileHandle.nullDevice
+        // Real-ESRGAN prints a line per tile per frame. It must be read as it comes: left in the
+        // pipe, the 64 KB buffer filled and Real-ESRGAN froze mid-write, stalling the render.
         let err = Pipe()
         p.standardError = err
+        let tail = LogTail()
+        err.fileHandleForReading.readabilityHandler = { tail.append($0.availableData) }
+
+        let watcher = Task.detached(priority: .utility) {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                let done = (try? FileManager.default.contentsOfDirectory(atPath: output.path).count) ?? 0
+                progress?(min(1, Double(done) / Double(max(expected, 1))))
+            }
+        }
+        defer { watcher.cancel() }
+
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 p.terminationHandler = { proc in
-                    let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                    ChildProcesses.remove(proc)
+                    err.fileHandleForReading.readabilityHandler = nil
+                    tail.append(err.fileHandleForReading.readDataToEndOfFile())
                     if proc.terminationStatus == 0 { cont.resume() }
                     else if proc.terminationReason == .uncaughtSignal { cont.resume(throwing: CancellationError()) }
-                    else { cont.resume(throwing: FFmpegError.failed(tool: "Real-ESRGAN", code: proc.terminationStatus, log: log)) }
+                    else { cont.resume(throwing: FFmpegError.failed(tool: "Real-ESRGAN", code: proc.terminationStatus, log: tail.text)) }
                 }
-                do { try p.run() } catch { cont.resume(throwing: error) }
+                do { try p.run(); ChildProcesses.add(p) } catch { cont.resume(throwing: error) }
             }
         } onCancel: {
             if p.isRunning { p.terminate() }
         }
     }
+}
+
+/// Keeps only the last few KB of a chatty tool's output, for error messages.
+private final class LogTail: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    func append(_ d: Data) {
+        guard !d.isEmpty else { return }
+        lock.lock(); defer { lock.unlock() }
+        data.append(d)
+        if data.count > 16_384 { data = data.suffix(8_192) }
+    }
+    var text: String { lock.lock(); defer { lock.unlock() }; return String(decoding: data, as: UTF8.self) }
 }
 
 /// Stage 7: turns one event into a restored master (HEVC 10-bit .mov at the target size).
@@ -135,6 +168,12 @@ struct Restorer {
     /// nil = keep the source height.
     var targetHeight: Int?
     static let chunkFrames = 240
+
+    /// AI upscaling runs only when the output is meaningfully bigger than the source
+    /// (at least 1.25× taller); otherwise the standard path gives the same result far faster.
+    static func usesAI(_ s: RestoreSettings, sourceHeight: Int, targetHeight: Int) -> Bool {
+        s.upscaler == .ai && RealESRGAN.isInstalled && Double(targetHeight) >= Double(sourceHeight) * 1.25
+    }
 
     static var mastersFolder: URL {
         let url = AppModel.supportFolder.appending(path: "Restored")
@@ -228,8 +267,11 @@ struct Restorer {
         let w = max(2, Int((Double(h) * Double(p.width) / Double(p.height) / 2).rounded()) * 2)
 
         // 2. Upscale in chunks (reused when present, so stopped renders resume).
+        // AI only when it actually enlarges the picture: footage already at (or near) the
+        // output size went through Real-ESRGAN at 2× and was shrunk back — e.g. 1080p frames
+        // rendered at 4K — for no gain and a lot of heat.
         var chunks: [URL] = []
-        if settings.upscaler == .ai && RealESRGAN.isInstalled {
+        if Self.usesAI(settings, sourceHeight: p.height, targetHeight: h) {
             let scale = settings.model.scales.first { p.height * $0 >= h } ?? settings.model.scales.last!
             let inDir = work.appending(path: "in"), outDir = work.appending(path: "out")
             var first = 0, index = 0
@@ -247,7 +289,11 @@ struct Restorer {
                                                     "-ss", String(format: "%.6f", Double(first) / p.fps),
                                                     "-i", prepass.path, "-frames:v", String(n),
                                                     "-start_number", "1", inDir.appending(path: "%08d.png").path])
-                    try await RealESRGAN.run(input: inDir, output: outDir, model: settings.model, scale: scale)
+                    let done = first, total = max(p.frames, 1)
+                    try await RealESRGAN.run(input: inDir, output: outDir, model: settings.model, scale: scale,
+                                             expected: n) { f in
+                        progress(0.1 + 0.85 * (Double(done) + Double(n) * f * 0.95) / Double(total))
+                    }
                     let part = work.appending(path: String(format: "chunk_%05d.part.mov", index))
                     try await FFmpeg.run("ffmpeg", ["-hide_banner", "-y", "-loglevel", "error",
                                                     "-framerate", p.rate, "-i", outDir.appending(path: "%08d.png").path,

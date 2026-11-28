@@ -64,6 +64,7 @@ enum FFmpeg {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Output, Error>) in
                 process.terminationHandler = { p in
+                    ChildProcesses.remove(p)
                     out.fileHandleForReading.readabilityHandler = nil
                     err.fileHandleForReading.readabilityHandler = nil
                     collector.appendOut(out.fileHandleForReading.readDataToEndOfFile())
@@ -78,7 +79,7 @@ enum FFmpeg {
                             tool: tool, code: p.terminationStatus, log: result.stderr))
                     }
                 }
-                do { try process.run() } catch { cont.resume(throwing: error) }
+                do { try process.run(); ChildProcesses.add(process) } catch { cont.resume(throwing: error) }
             }
         } onCancel: {
             if process.isRunning { process.terminate() }

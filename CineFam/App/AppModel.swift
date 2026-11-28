@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -117,6 +118,13 @@ final class AppModel {
     nonisolated private static var libraryFile: URL { supportFolder.appending(path: "library.json") }
 
     init() {
+        // A crash or force quit leaves our ffmpeg / Real-ESRGAN running (and the Mac hot):
+        // stop those first, and make sure quitting stops whatever is running now.
+        Task.detached(priority: .utility) { ChildProcesses.killOrphans() }
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
+                                               object: nil, queue: nil) { _ in
+            ChildProcesses.terminateAll()
+        }
         load()
         // Work interrupted by quitting starts again.
         for i in tapes.indices {
