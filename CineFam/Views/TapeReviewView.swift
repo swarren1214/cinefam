@@ -285,9 +285,10 @@ struct TapeReviewView: View {
     }
 
     /// The restored copy had its ragged edges trimmed, so enlarge the original to match.
-    private var originalRectForCompare: @Sendable (CGSize) -> CGRect {
+    private var originalRectForCompare: (CGSize) -> CGRect {
         let r = model.exportSettings.restore
-        return r.enabled && r.cleanEdges ? SplitCompareView.trimmed(Restorer.edgeCrop) : SplitCompareView.full
+        if r.enabled && r.cleanEdges { return SplitCompareView.trimmed(Restorer.edgeCrop) }
+        return SplitCompareView.full
     }
 
     // MARK: Compare mode sync

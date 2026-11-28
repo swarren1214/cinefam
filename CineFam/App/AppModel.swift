@@ -314,8 +314,8 @@ final class AppModel {
     func scanFaces(tape tapeID: UUID) async {
         guard let tape = self.tape(tapeID) else { return }
         faceScanProgress = 0
-        let found = await FaceExtractor.scan(tape) { p in
-            Task { @MainActor [weak self] in self?.faceScanProgress = p }
+        let found = await FaceExtractor.scan(tape) { [weak self] p in
+            Task { @MainActor in self?.faceScanProgress = p }
         }
         faceLibrary.replaceFaces(of: tapeID, with: found)
         faceLibrary.save()
@@ -410,16 +410,16 @@ final class AppModel {
         mutateTape(id) { $0.status = .analyzing(progress: 0) }
         do {
             // Stages 1–3 take the first half of the progress bar, dating and naming the rest.
-            var result = try await analyzer.analyze(tape, proxyFolder: Self.proxyFolder) { p in
-                Task { @MainActor [weak self] in self?.setAnalysisProgress(id, p * 0.5) }
+            var result = try await analyzer.analyze(tape, proxyFolder: Self.proxyFolder) { [weak self] p in
+                Task { @MainActor in self?.setAnalysisProgress(id, p * 0.5) }
             }
             for i in result.events.indices {
                 result.events[i].title = "\(tape.label) – Event \(i + 1)"
             }
             mutateTape(id) { $0 = result; $0.status = .analyzing(progress: 0.5) }
             let enricher = EventEnricher(options: .init(transcribe: autoTranscribe, name: aiNaming))
-            result = try await enricher.enrich(result) { p in
-                Task { @MainActor [weak self] in self?.setAnalysisProgress(id, 0.5 + p * 0.5) }
+            result = try await enricher.enrich(result) { [weak self] p in
+                Task { @MainActor in self?.setAnalysisProgress(id, 0.5 + p * 0.5) }
             }
             result.status = .needsReview
             mutateTape(id) { $0 = result }
@@ -595,8 +595,8 @@ final class AppModel {
         previewTask = Task {
             await ensureRealESRGAN()
             do {
-                let url = try await restorer.preview(event, in: tape, at: time) { p in
-                    Task { @MainActor [weak self] in self?.previewProgress = p }
+                let url = try await restorer.preview(event, in: tape, at: time) { [weak self] p in
+                    Task { @MainActor in self?.previewProgress = p }
                 }
                 previewURL = url
             } catch is CancellationError {
@@ -726,8 +726,8 @@ final class AppModel {
         ffmpegInstallProgress = 0
         Task {
             do {
-                try await FFmpegInstaller.install { p in
-                    Task { @MainActor [weak self] in self?.ffmpegInstallProgress = p }
+                try await FFmpegInstaller.install { [weak self] p in
+                    Task { @MainActor in self?.ffmpegInstallProgress = p }
                 }
             } catch {
                 report(error)
@@ -751,8 +751,8 @@ final class AppModel {
         esrganInstallProgress = 0
         defer { esrganInstallProgress = nil }
         do {
-            try await RealESRGAN.install { p in
-                Task { @MainActor [weak self] in self?.esrganInstallProgress = p }
+            try await RealESRGAN.install { [weak self] p in
+                Task { @MainActor in self?.esrganInstallProgress = p }
             }
         } catch {
             report(error)
@@ -764,8 +764,8 @@ final class AppModel {
         esrganInstallProgress = 0
         Task {
             do {
-                try await RealESRGAN.install { p in
-                    Task { @MainActor [weak self] in self?.esrganInstallProgress = p }
+                try await RealESRGAN.install { [weak self] p in
+                    Task { @MainActor in self?.esrganInstallProgress = p }
                 }
             } catch {
                 report(error)

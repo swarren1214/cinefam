@@ -14,8 +14,8 @@ struct SplitCompareView: View {
     var aspect: CGFloat
     var leftLabel = "Original"
     var rightLabel = "Restored"
-    var originalRect: @Sendable (CGSize) -> CGRect = SplitCompareView.full
-    var restoredRect: @Sendable (CGSize) -> CGRect = SplitCompareView.full
+    var originalRect: (CGSize) -> CGRect = SplitCompareView.full
+    var restoredRect: (CGSize) -> CGRect = SplitCompareView.full
     var showsPlayButton = true
 
     @State private var playing = false
@@ -60,15 +60,15 @@ struct SplitCompareView: View {
 
     // MARK: Where each side's video sits (AppKit coordinates: origin bottom-left)
 
-    static let full: @Sendable (CGSize) -> CGRect = { CGRect(origin: .zero, size: $0) }
+    static func full(_ s: CGSize) -> CGRect { CGRect(origin: .zero, size: s) }
     /// Left half of a double-wide side-by-side video.
-    static let leftHalf: @Sendable (CGSize) -> CGRect = { CGRect(x: 0, y: 0, width: $0.width * 2, height: $0.height) }
+    static func leftHalf(_ s: CGSize) -> CGRect { CGRect(x: 0, y: 0, width: s.width * 2, height: s.height) }
     /// Right half of a double-wide side-by-side video.
-    static let rightHalf: @Sendable (CGSize) -> CGRect = { CGRect(x: -$0.width, y: 0, width: $0.width * 2, height: $0.height) }
+    static func rightHalf(_ s: CGSize) -> CGRect { CGRect(x: -s.width, y: 0, width: s.width * 2, height: s.height) }
 
     /// Shows the original enlarged so it lines up with a restored picture that had its ragged
     /// edges trimmed (see `Restorer.edgeCrop`).
-    static func trimmed(_ c: Restorer.EdgeCrop) -> @Sendable (CGSize) -> CGRect {
+    static func trimmed(_ c: Restorer.EdgeCrop) -> (CGSize) -> CGRect {
         { s in
             let w = s.width / c.width, h = s.height / c.height
             return CGRect(x: -c.left * w, y: s.height - h * (1 - c.top), width: w, height: h)
@@ -81,8 +81,8 @@ struct SplitCompareView: View {
 struct ComparePlayerView: NSViewRepresentable {
     let original: AVPlayer
     let restored: AVPlayer
-    var originalRect: @Sendable (CGSize) -> CGRect
-    var restoredRect: @Sendable (CGSize) -> CGRect
+    var originalRect: (CGSize) -> CGRect
+    var restoredRect: (CGSize) -> CGRect
 
     func makeNSView(context: Context) -> CompareNSView {
         let v = CompareNSView()
