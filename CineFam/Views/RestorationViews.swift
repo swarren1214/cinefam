@@ -43,7 +43,7 @@ struct RestorationSettingsSection: View {
             Text("Restoration")
         } footer: {
             if model.exportSettings.restore.enabled {
-                Text("Lower AI strength keeps faces natural. Smooth motion doubles render time. Restored copies are kept, so exporting more formats later is quick.")
+                Text("Lower AI strength keeps faces natural. The Detailed model is a much larger network than Fast and takes far longer, so its preview is 4 seconds. Smooth motion doubles render time. Restored copies are kept, so exporting more formats later is quick.")
             }
         }
     }
@@ -98,7 +98,11 @@ struct RestorePreviewSheet: View {
                     } else if let p = model.previewProgress {
                         VStack(spacing: 10) {
                             ProgressView(value: p).frame(width: 260)
-                            Text("Restoring 10 seconds…").foregroundStyle(.secondary)
+                            Text("Restoring \(Int(Restorer.previewSeconds(model.exportSettings.restore))) seconds… \(Int(p * 100))%")
+                                .monospacedDigit()
+                            Text(model.previewStatus ?? "Getting ready…")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }

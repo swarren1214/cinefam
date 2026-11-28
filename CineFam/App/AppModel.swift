@@ -40,6 +40,8 @@ final class AppModel {
     var showRestorePreview = false
     var previewURL: URL?
     var previewProgress: Double?
+    /// What the preview is doing right now, e.g. "Upscaling frame 40 of 120 · about 2 min left".
+    var previewStatus: String?
     private var previewTask: Task<Void, Never>?
 
     // Poster Studio
@@ -552,7 +554,9 @@ final class AppModel {
                 var master: URL?
                 if restoring {
                     renderStage = "Restoring \(n + 1) of \(events.count): \(event.title)"
-                    master = try await restorer.restore(event, in: tape) { p in
+                    master = try await restorer.restore(event, in: tape, status: { [title = event.title, count = events.count] s in
+                        Task { @MainActor in self.renderStage = "Restoring \(n + 1) of \(count): \(title) · \(s)" }
+                    }) { p in
                         Task { @MainActor in report(p * restoreShare) }
                     }
                 }
@@ -590,13 +594,16 @@ final class AppModel {
         previewTask?.cancel()
         previewURL = nil
         previewProgress = 0
+        previewStatus = nil
         showRestorePreview = true
         let restorer = Restorer(settings: exportSettings.restore, targetHeight: exportSettings.resolution.height)
         previewTask = Task {
             await ensureRealESRGAN()
             do {
-                let url = try await restorer.preview(event, in: tape, at: time) { p in
-                    Task { @MainActor in self.previewProgress = p }
+                let url = try await restorer.preview(event, in: tape, at: time, status: { s in
+                    Task { @MainActor in if self.previewProgress != nil { self.previewStatus = s } }
+                }) { p in
+                    Task { @MainActor in if self.previewProgress != nil { self.previewProgress = p } }
                 }
                 previewURL = url
             } catch is CancellationError {
@@ -604,12 +611,14 @@ final class AppModel {
                 report(error)
             }
             previewProgress = nil
+            previewStatus = nil
         }
     }
 
     func cancelPreview() {
         previewTask?.cancel()
         previewProgress = nil
+        previewStatus = nil
     }
 
     // MARK: Posters

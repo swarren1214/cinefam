@@ -169,6 +169,19 @@ struct Restorer {
     var targetHeight: Int?
     static let chunkFrames = 240
 
+    /// The Detailed model is a much bigger network than Fast, so its preview is shorter.
+    static func previewSeconds(_ s: RestoreSettings) -> Double {
+        s.upscaler == .ai && s.model == .detailed ? 4 : 10
+    }
+
+    static func timeLeft(_ seconds: Double) -> String {
+        switch seconds {
+        case ..<45: return "less than a minute left"
+        case ..<5400: return "about \(Int((seconds / 60).rounded())) min left"
+        default: return String(format: "about %.1f hours left", seconds / 3600)
+        }
+    }
+
     /// AI upscaling runs only when the output is meaningfully bigger than the source
     /// (at least 1.25× taller); otherwise the standard path gives the same result far faster.
     static func usesAI(_ s: RestoreSettings, sourceHeight: Int, targetHeight: Int) -> Bool {
@@ -229,7 +242,10 @@ struct Restorer {
     // MARK: Pipeline
 
     /// Renders (or reuses) the master. `range` restores only part of the event (for previews).
+    /// `status` gets a short description of the current step, e.g.
+    /// "Upscaling frame 120 of 300 · about 2 min left".
     func restore(_ event: TapeEvent, in tape: Tape, range: ClosedRange<TimeInterval>? = nil, output: URL? = nil,
+                 status: (@Sendable (String) -> Void)? = nil,
                  progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
         let fm = FileManager.default
         let out = output ?? masterURL(for: event)
@@ -242,6 +258,7 @@ struct Restorer {
 
         // 1. Prepass — one continuous run so temporal filters never restart.
         let prepass = work.appending(path: "prepass.mkv")
+        status?("Cleaning up the picture and sound…")
         if !fm.fileExists(atPath: prepass.path) {
             let part = work.appending(path: "prepass.part.mkv")
             var a = ["-hide_banner", "-y", "-nostats", "-progress", "pipe:1",
@@ -275,6 +292,10 @@ struct Restorer {
             let scale = settings.model.scales.first { p.height * $0 >= h } ?? settings.model.scales.last!
             let inDir = work.appending(path: "in"), outDir = work.appending(path: "out")
             var first = 0, index = 0
+            // For the time estimate: frames Real-ESRGAN has finished in this run.
+            let aiStart = Date()
+            var upscaledThisRun = 0
+            status?("Starting the AI upscaler…")
             while first < p.frames {
                 try Task.checkCancellation()
                 let n = min(Self.chunkFrames, p.frames - first)
@@ -289,11 +310,22 @@ struct Restorer {
                                                     "-ss", String(format: "%.6f", Double(first) / p.fps),
                                                     "-i", prepass.path, "-frames:v", String(n),
                                                     "-start_number", "1", inDir.appending(path: "%08d.png").path])
-                    let done = first, total = max(p.frames, 1)
+                    let done = first, total = max(p.frames, 1), before = upscaledThisRun
                     try await RealESRGAN.run(input: inDir, output: outDir, model: settings.model, scale: scale,
                                              expected: n) { f in
+                        let inChunk = Int(Double(n) * f)
                         progress(0.1 + 0.85 * (Double(done) + Double(n) * f * 0.95) / Double(total))
+                        let finished = done + inChunk, rateBase = before + inChunk
+                        let elapsed = Date().timeIntervalSince(aiStart)
+                        var text = "Upscaling frame \(min(finished + 1, total)) of \(total)"
+                        if rateBase >= 2, elapsed > 3 {
+                            let left = Double(total - finished) * elapsed / Double(rateBase)
+                            text += " · " + Self.timeLeft(left)
+                        }
+                        status?(text)
                     }
+                    upscaledThisRun += n
+                    status?("Blending AI and original detail…")
                     let part = work.appending(path: String(format: "chunk_%05d.part.mov", index))
                     try await FFmpeg.run("ffmpeg", ["-hide_banner", "-y", "-loglevel", "error",
                                                     "-framerate", p.rate, "-i", outDir.appending(path: "%08d.png").path,
@@ -325,6 +357,7 @@ struct Restorer {
         }
 
         // 3. Join the chunks and add the cleaned audio.
+        status?("Finishing…")
         let listing = work.appending(path: "chunks.txt")
         try chunks.map { "file '\($0.path.replacingOccurrences(of: "'", with: "'\\''"))'" }
             .joined(separator: "\n").write(to: listing, atomically: true, encoding: .utf8)
@@ -342,17 +375,21 @@ struct Restorer {
 
     /// A 10-second side-by-side (original | restored) starting at `time`, for checking settings.
     func preview(_ event: TapeEvent, in tape: Tape, at time: TimeInterval,
+                 status: (@Sendable (String) -> Void)? = nil,
                  progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
-        let start = max(event.start, min(time, event.end - 10))
-        let end = min(event.end, start + 10)
+        let length = Self.previewSeconds(settings)
+        let start = max(event.start, min(time, event.end - length))
+        let end = min(event.end, start + length)
         let folder = AppModel.supportFolder.appending(path: "Previews")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let stamp = "\(event.id.uuidString)-\(Int(start * 10))-\(settings.fingerprint(event: event, height: targetHeight))"
+        // Length is part of the name: a leftover 10-second prepass must not be reused for a 4-second preview.
+        let stamp = "\(event.id.uuidString)-\(Int(start * 10))-\(Int(length))s-\(settings.fingerprint(event: event, height: targetHeight))"
         let master = folder.appending(path: "\(stamp)-restored.mov")
         let sideBySide = folder.appending(path: "\(stamp)-compare-v2.mp4")
         if FileManager.default.fileExists(atPath: sideBySide.path) { progress(1); return sideBySide }
 
-        _ = try await restore(event, in: tape, range: start...end, output: master) { progress($0 * 0.9) }
+        _ = try await restore(event, in: tape, range: start...end, output: master, status: status) { progress($0 * 0.9) }
+        status?("Building the comparison…")
         let mp = try await Self.probeFrames(master)
         let deint = tape.info?.isInterlaced ?? true ? "bwdif=mode=send_frame," : ""
         let trim = settings.cleanEdges ? Self.edgeCropFilter + "," : ""
