@@ -7,12 +7,6 @@
       "layers" : [
         {
           "glass" : true,
-          "image-name" : "3-Spark.svg",
-          "name" : "3-Spark",
-          "opacity" : 0.95
-        },
-        {
-          "glass" : true,
           "image-name" : "2-Reels.svg",
           "name" : "2-Reels",
           "opacity-specializations" : [

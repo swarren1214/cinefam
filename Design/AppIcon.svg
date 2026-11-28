@@ -26,11 +26,6 @@
   <circle cx="402" cy="492" r="68" fill="none" stroke="#FFFFFF" stroke-width="16"/><circle cx="402" cy="492" r="20" fill="#FFFFFF"/><line x1="427.1" y1="498.7" x2="458.0" y2="507.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="408.7" y1="517.1" x2="417.0" y2="548.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="383.6" y1="510.4" x2="361.0" y2="533.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="376.9" y1="485.3" x2="346.0" y2="477.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="395.3" y1="466.9" x2="387.0" y2="436.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="420.4" y1="473.6" x2="443.0" y2="451.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
   <circle cx="622" cy="492" r="68" fill="none" stroke="#FFFFFF" stroke-width="16"/><circle cx="622" cy="492" r="20" fill="#FFFFFF"/><line x1="647.1" y1="498.7" x2="678.0" y2="507.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="628.7" y1="517.1" x2="637.0" y2="548.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="603.6" y1="510.4" x2="581.0" y2="533.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="596.9" y1="485.3" x2="566.0" y2="477.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="615.3" y1="466.9" x2="607.0" y2="436.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/><line x1="640.4" y1="473.6" x2="663.0" y2="451.0" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
 </g>
-    <g opacity="0.97">
-  <!-- Sparkle: the tape, restored -->
-  <polygon points="808.0,98.0 822.8,175.2 900.0,190.0 822.8,204.8 808.0,282.0 793.2,204.8 716.0,190.0 793.2,175.2" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="10" stroke-linejoin="round"/>
-  <polygon points="694.0,92.0 701.1,122.9 732.0,130.0 701.1,137.1 694.0,168.0 686.9,137.1 656.0,130.0 686.9,122.9" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="6" stroke-linejoin="round" opacity="0.85"/>
-</g>
   </g>
   <rect width="1024" height="1024" rx="230" fill="url(#sheen)"/>
 </svg>
